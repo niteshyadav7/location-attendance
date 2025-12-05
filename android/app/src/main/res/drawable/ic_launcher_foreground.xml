@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Main Location Pin -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,25C43.51,25 35,33.51 35,44c0,15.75 19,35 19,35s19,-19.25 19,-35C73,33.51 64.49,25 54,25zM54,51c-3.87,0 -7,-3.13 -7,-7s3.13,-7 7,-7s7,3.13 7,7S57.87,51 54,51z"/>
+    
+    <!-- Inner circle of pin (darker for depth) -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M54,44m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0"/>
+    
+    <!-- Checkmark badge (bottom right) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M70,62m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0"/>
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M70,62m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M67,62l2,2l4,-4"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

@@ -1,0 +1,76 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           🔐 UPLOAD CERTIFICATE - QUICK REFERENCE                ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📄 CERTIFICATE FILE TO UPLOAD TO PLAY CONSOLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+File Location:
+  android/app/upload_cert.pem
+
+File Size: 1,320 bytes
+Created: December 5, 2025 13:18:48
+
+
+📋 CERTIFICATE CONTENT (Copy this if needed)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+-----BEGIN CERTIFICATE-----
+MIIDkTCCAnmgAwIBAgIIBDqNb9Gw3b8wDQYJKoZIhvcNAQELBQAwdjELMAkGA1UE
+BhMCSU4xDjAMBgNVBAgTBVN0YXRlMQ0wCwYDVQQHEwRDaXR5MRQwEgYDVQQKEwtZ
+b3VyQ29tcGFueTEUMBIGA1UECxMLRGV2ZWxvcG1lbnQxHDAaBgNVBAMTE0xvY2F0
+aW9uIEF0dGVuZGFuY2UwIBcNMjUxMjA1MDc0ODM5WhgPMjA1MzA0MjIwNzQ4Mzla
+MHYxCzAJBgNVBAYTAklOMQ4wDAYDVQQIEwVTdGF0ZTENMAsGA1UEBxMEQ2l0eTEU
+MBIGA1UEChMLWW91ckNvbXBhbnkxFDASBgNVBAsTC0RldmVsb3BtZW50MRwwGgYD
+VQQDExNMb2NhdGlvbiBBdHRlbmRhbmNlMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+MIIBCgKCAQEAn6/zXc+vGkq4+PRRHHsAW4nrCpVNg4yY7vjUQAAw0LSmmPkVjPMV
+LC+8ml9TZFMTCIBSNJ2oOnGmo6saHLQxn5CP71k5tEVGITQ54kq+5lOWhh3hoWwc
+SXEn7fFnIjmj2c85mn/6u/HrXJQrYrRPXB19UsCBeCc6ydm4pcoI9j6SX3Hba8+I
+pU06kNi6VS5a85B2NABG33lLz8DQqbIRgdLGJZsWNB20/vbDyf3rrLVFMbVjaZvU
+k9C6Xsbwl8yE6EzPsCLxPYnPt/cleHrFmyEUzEbYLsoVcTsj+MwPhI3m+9KZqWAx
+a+MQby5zt5MhFrEtfmz1cw1A5pFTubCOcQIDAQABoyEwHzAdBgNVHQ4EFgQU6cTz
+sXKSjrnBNtgxxjqTxP+pnn0wDQYJKoZIhvcNAQELBQADggEBAIXiy3MQ1aAndCjd
+E3M+vg2axdb1X01aWjgOFsgWWIm1T53pjY4xGuemmG2gptZ4wEMEz8PCMTajCA9+
+xPhamCR8Q3ec4ujivG1OgX5g/alaYaNgRTVm01/8L157/ZtTHolA9EKqtLNOk+Re
+piXsPZGjvIxQHzooeih+vWnsEl/SCzN0wmZkYMo6byaYGomT+0+dPekbIzRcWxqh
+qb/1Bl9P1lxpWvHhDBWMxkNMburbVknOG6Pa8Ag4a+NNUiFAApvFsWfkU9DlpcL8
+5ldb+H2y8CYEZIYMQDeBwXtYcIPKxGdU43UwFQyrxsoT02PUCr6R013jO9hMnt8I
+7mM+ecY=
+-----END CERTIFICATE-----
+
+
+🎯 UPLOAD STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Go to: https://play.google.com/console
+2. Select: Location Attendance app
+3. Navigate: Setup → App Integrity → App Signing
+4. Find: "Upload key certificate" section
+5. Click: "Request upload key reset"
+6. Upload: android/app/upload_cert.pem
+7. Submit and wait for approval (24-48 hours)
+
+
+🔑 KEYSTORE CREDENTIALS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Keystore File:  upload-key.jks
+Alias:          upload
+Password:       locationattendance2024
+Valid Until:    April 22, 2053
+
+
+⚠️  IMPORTANT REMINDERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Backup upload-key.jks to a safe location NOW
+✓ Store password in a password manager
+✓ Never commit keystore or gradle.properties to Git
+✓ Keep multiple backups (cloud + local)
+✓ Wait for Google approval before building new AAB
+
+
+📞 NEED HELP?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+See KEYSTORE_SETUP_GUIDE.md for detailed instructions
