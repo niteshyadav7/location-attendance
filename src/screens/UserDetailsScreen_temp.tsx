@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { getFirestore, doc, getDoc, collection, query, where, getDocs, updateDoc } from '@react-native-firebase/firestore';
+import { getFirestore, doc, getDoc, collection, query, where, getDocs, orderBy, limit, updateDoc } from '@react-native-firebase/firestore';
 import { UserProfile, AttendanceRecord, LeaveRequest } from '../types';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -57,29 +57,20 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
           }
         }
 
-        // Check if user has any active (unchecked-out) attendance
-        // Note: Firestore doesn't support querying for null, so we fetch all and filter
+        // Check if user has active attendance today
+        const today = format(new Date(), 'yyyy-MM-dd');
         const attendanceQuery = query(
           collection(db, 'attendance'),
-          where('userId', '==', userId)
+          where('userId', '==', userId),
+          where('date', '==', today)
         );
         const attendanceSnapshot = await getDocs(attendanceQuery);
-        
-        // Find the most recent unchecked-out attendance
-        let mostRecentUncheckedOut = null;
-        let mostRecentTime = 0;
-        
-        attendanceSnapshot.forEach((doc: any) => {
-          const data = doc.data() as AttendanceRecord;
-          
-          if (!data.checkOutTime && data.checkInTime > mostRecentTime) {
-            mostRecentUncheckedOut = doc.id;
-            mostRecentTime = data.checkInTime;
+        if (!attendanceSnapshot.empty) {
+          const attendanceDoc = attendanceSnapshot.docs[0];
+          const attendanceData = attendanceDoc.data() as AttendanceRecord;
+          if (!attendanceData.checkOutTime) {
+            setCurrentAttendanceId(attendanceDoc.id);
           }
-        });
-        
-        if (mostRecentUncheckedOut) {
-          setCurrentAttendanceId(mostRecentUncheckedOut);
         }
 
         // Fetch attendance stats for current month
@@ -502,252 +493,3 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f9fafb',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f9fafb',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  headerCard: {
-    padding: 24,
-    alignItems: 'center',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-  },
-  avatarContainer: {
-    marginBottom: 16,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  avatarText: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  userName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  userEmail: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 16,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginBottom: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#fff',
-    marginRight: 8,
-  },
-  statusText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  lastActiveText: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 16,
-  },
-  checkoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.9)',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 16,
-    marginTop: 8,
-    gap: 8,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  checkoutButtonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  section: {
-    padding: 16,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1f2937',
-    marginBottom: 12,
-  },
-  infoCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  infoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '500',
-  },
-  infoValue: {
-    fontSize: 14,
-    color: '#1f2937',
-    fontWeight: '600',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#f3f4f6',
-  },
-  accountStatusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  accountStatusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: '45%',
-    padding: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    elevation: 1,
-  },
-  statNumber: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginTop: 8,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  emptyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 40,
-    alignItems: 'center',
-    elevation: 1,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#9ca3af',
-    marginTop: 12,
-  },
-  attendanceCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  attendanceHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  dateContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  dateText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  statusChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusChipText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  attendanceDetails: {
-    gap: 8,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  timeLabel: {
-    fontSize: 13,
-    color: '#6b7280',
-    flex: 1,
-  },
-  timeValue: {
-    fontSize: 13,
-    color: '#1f2937',
-    fontWeight: '600',
-  },
-});

@@ -115,12 +115,14 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
 
   const renderItem = ({ item }: { item: UserProfile }) => (
     <TouchableOpacity
-      activeOpacity={0.7}
+      activeOpacity={0.9}
       onPress={() => handleUserPress(item.uid)}
+      style={styles.cardTouchable}
     >
       <View style={styles.card}>
         <View style={styles.cardContent}>
-          <View style={styles.avatarContainer}>
+          {/* Left Section - Avatar */}
+          <View style={styles.leftSection}>
             <LinearGradient
               colors={['#667eea', '#764ba2']}
               start={{ x: 0, y: 0 }}
@@ -129,18 +131,29 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             >
               <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
             </LinearGradient>
+            
+            {/* Status indicator dot on avatar */}
+            <View style={[styles.statusIndicatorDot, { 
+              backgroundColor: getStatusColor(item.currentStatus),
+            }]} />
           </View>
 
+          {/* Middle Section - User Info */}
           <View style={styles.userInfo}>
             <View style={styles.nameRow}>
-              <Text style={styles.name}>{item.name}</Text>
+              <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
               {item.isActive === false && (
                 <View style={styles.inactiveBadge}>
+                  <Ionicons name="ban-outline" size={10} color="#dc2626" />
                   <Text style={styles.inactiveBadgeText}>Inactive</Text>
                 </View>
               )}
             </View>
-            <Text style={styles.email}>{item.email}</Text>
+            
+            <View style={styles.emailRow}>
+              <Ionicons name="mail-outline" size={13} color="#9ca3af" />
+              <Text style={styles.email} numberOfLines={1}>{item.email}</Text>
+            </View>
             
             {item.lastActive && (
               <View style={styles.lastActiveRow}>
@@ -152,12 +165,18 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             )}
           </View>
 
-          <View style={styles.statusContainer}>
+          {/* Right Section - Status & Arrow */}
+          <View style={styles.rightSection}>
             <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.currentStatus) }]}>
-              <View style={styles.statusDot} />
               <Text style={styles.statusText}>{getStatusLabel(item.currentStatus)}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#d1d5db" style={{ marginTop: 8 }} />
+            
+            <Ionicons 
+              name="chevron-forward" 
+              size={20} 
+              color="#9ca3af" 
+              style={styles.chevronIcon}
+            />
           </View>
         </View>
       </View>
@@ -280,65 +299,95 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 0,
   },
+  cardTouchable: {
+    marginBottom: 14,
+  },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    elevation: 3,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
   },
   cardContent: {
     flexDirection: 'row',
-    padding: 16,
+    padding: 18,
     alignItems: 'center',
+    gap: 14,
   },
-  avatarContainer: {
-    marginRight: 12,
+  leftSection: {
+    position: 'relative',
   },
   avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
   },
   avatarText: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '800',
     color: '#fff',
+  },
+  statusIndicatorDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 3.5,
+    borderColor: '#ffffff',
+    elevation: 3,
   },
   userInfo: { 
     flex: 1,
+    gap: 5,
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 4,
   },
   name: { 
-    fontSize: 16, 
-    fontWeight: 'bold', 
-    color: '#1f2937',
+    fontSize: 16.5, 
+    fontWeight: '700', 
+    color: '#111827',
+    flex: 1,
+    letterSpacing: 0.2,
   },
   inactiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fee2e2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 3,
   },
   inactiveBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#dc2626',
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  emailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   email: { 
     fontSize: 13, 
     color: '#6b7280', 
-    marginBottom: 6,
+    fontWeight: '500',
+    flex: 1,
   },
   lastActiveRow: {
     flexDirection: 'row',
@@ -346,30 +395,36 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   lastActiveText: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#9ca3af',
+    fontWeight: '500',
   },
-  statusContainer: {
+  rightSection: {
     alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 10,
   },
   statusBadge: { 
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10, 
-    paddingVertical: 6, 
+    paddingHorizontal: 12, 
+    paddingVertical: 7, 
     borderRadius: 12,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#fff',
-    marginRight: 6,
+    minWidth: 80,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   statusText: { 
     color: '#fff', 
-    fontSize: 11, 
-    fontWeight: 'bold',
+    fontSize: 11.5, 
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  chevronIcon: {
+    opacity: 0.6,
   },
   loadingContainer: {
     flex: 1,
