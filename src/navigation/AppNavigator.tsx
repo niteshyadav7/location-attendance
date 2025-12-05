@@ -19,6 +19,7 @@ import { LeaveScreen } from '../screens/LeaveScreen';
 import { AdminLeaveScreen } from '../screens/AdminLeaveScreen';
 import { AdminNoticeScreen } from '../screens/AdminNoticeScreen';
 import { PermissionScreen } from '../screens/PermissionScreen';
+import { UserDetailsScreen } from '../screens/UserDetailsScreen';
 import { UserProfile } from '../types';
 import { ActivityIndicator, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -34,6 +35,21 @@ const AdminStack = () => (
     <Stack.Screen name="EditLocation" component={EditLocationScreen} options={{ title: 'Edit Location' }} />
     <Stack.Screen name="ManageUsers" component={ManageUsersScreen} options={{ title: 'Manage Users' }} />
     <Stack.Screen name="AdminNotifications" component={AdminNotificationScreen} options={{ title: 'Notifications' }} />
+  </Stack.Navigator>
+);
+
+const DashboardStack = () => (
+  <Stack.Navigator>
+    <Stack.Screen 
+      name="DashboardHome" 
+      component={AdminDashboardScreen} 
+      options={{ title: 'Dashboard' }} 
+    />
+    <Stack.Screen 
+      name="UserDetails" 
+      component={UserDetailsScreen} 
+      options={{ title: 'User Details' }} 
+    />
   </Stack.Navigator>
 );
 
@@ -61,7 +77,7 @@ const AdminTabs = () => (
       paddingTop: 8,
     },
   })}>
-    <Tab.Screen name="Dashboard" component={AdminDashboardScreen} />
+    <Tab.Screen name="Dashboard" component={DashboardStack} options={{ headerShown: false }} />
     <Tab.Screen name="Locations" component={AdminStack} options={{ headerShown: false }} />
     <Tab.Screen name="Notices" component={AdminNoticeScreen} options={{ title: 'Notice Board' }} />
     <Tab.Screen name="Leaves" component={AdminLeaveScreen} />

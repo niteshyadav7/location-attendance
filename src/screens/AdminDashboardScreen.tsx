@@ -1,14 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  ActivityIndicator,
+  TouchableOpacity,
+  TextInput,
+  Animated,
+} from 'react-native';
 import { getFirestore, collection, query, where, onSnapshot } from '@react-native-firebase/firestore';
 import { UserProfile } from '../types';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import LinearGradient from 'react-native-linear-gradient';
 
-export const AdminDashboardScreen = () => {
+export const AdminDashboardScreen = ({ navigation }: any) => {
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [filteredUsers, setFilteredUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState({ working: 0, onBreak: 0, checkedOut: 0, offline: 0 });
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const db = getFirestore();
@@ -31,22 +44,41 @@ export const AdminDashboardScreen = () => {
       });
 
       setUsers(userList);
+      setFilteredUsers(userList);
       setStats({ working, onBreak, checkedOut, offline });
       setLoading(false);
+      setRefreshing(false);
     }, (error) => {
         console.error("Error fetching users:", error);
         setLoading(false);
+        setRefreshing(false);
     });
 
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setFilteredUsers(users);
+    } else {
+      const filtered = users.filter(user =>
+        user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        user.email.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredUsers(filtered);
+    }
+  }, [searchQuery, users]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+  };
+
   const getStatusColor = (status?: string) => {
     switch (status) {
-      case 'WORKING': return '#4CD964'; // Green
-      case 'ON_BREAK': return '#F5A623'; // Orange
-      case 'CHECKED_OUT': return '#8E8E93'; // Gray
-      default: return '#FF3B30'; // Red (Offline/Absent)
+      case 'WORKING': return '#10b981';
+      case 'ON_BREAK': return '#f59e0b';
+      case 'CHECKED_OUT': return '#6b7280';
+      default: return '#ef4444';
     }
   };
 
@@ -59,58 +91,128 @@ export const AdminDashboardScreen = () => {
       }
   };
 
+  const handleUserPress = (userId: string) => {
+    navigation.navigate('UserDetails', { userId });
+  };
+
+  const renderStatCard = (
+    icon: string,
+    count: number,
+    label: string,
+    colors: string[]
+  ) => (
+    <LinearGradient
+      colors={colors}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.statCard}
+    >
+      <Ionicons name={icon as any} size={24} color="#fff" />
+      <Text style={styles.statNumber}>{count}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </LinearGradient>
+  );
+
   const renderItem = ({ item }: { item: UserProfile }) => (
-    <View style={styles.card}>
-      <View style={styles.row}>
-        <View style={styles.userInfo}>
-            <Text style={styles.name}>{item.name}</Text>
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => handleUserPress(item.uid)}
+    >
+      <View style={styles.card}>
+        <View style={styles.cardContent}>
+          <View style={styles.avatarContainer}>
+            <LinearGradient
+              colors={['#667eea', '#764ba2']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.avatar}
+            >
+              <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+            </LinearGradient>
+          </View>
+
+          <View style={styles.userInfo}>
+            <View style={styles.nameRow}>
+              <Text style={styles.name}>{item.name}</Text>
+              {item.isActive === false && (
+                <View style={styles.inactiveBadge}>
+                  <Text style={styles.inactiveBadgeText}>Inactive</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.email}>{item.email}</Text>
-        </View>
-        <View style={[styles.badge, { backgroundColor: getStatusColor(item.currentStatus) }]}>
-            <Text style={styles.badgeText}>{getStatusLabel(item.currentStatus)}</Text>
+            
+            {item.lastActive && (
+              <View style={styles.lastActiveRow}>
+                <Ionicons name="time-outline" size={12} color="#9ca3af" />
+                <Text style={styles.lastActiveText}>
+                  {format(item.lastActive, 'MMM dd, h:mm a')}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.statusContainer}>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.currentStatus) }]}>
+              <View style={styles.statusDot} />
+              <Text style={styles.statusText}>{getStatusLabel(item.currentStatus)}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#d1d5db" style={{ marginTop: 8 }} />
+          </View>
         </View>
       </View>
-      {item.lastActive && (
-        <View style={styles.details}>
-            <Text style={styles.detailText}>
-                <Ionicons name="time-outline" size={14} /> Last Update: {format(item.lastActive, 'p')}
-            </Text>
-        </View>
-      )}
-    </View>
+    </TouchableOpacity>
   );
 
   return (
     <View style={styles.container}>
       {/* Stats Header */}
       <View style={styles.statsContainer}>
-        <View style={styles.statItem}>
-            <Text style={[styles.statNumber, { color: '#4CD964' }]}>{stats.working}</Text>
-            <Text style={styles.statLabel}>Working</Text>
-        </View>
-        <View style={styles.statItem}>
-            <Text style={[styles.statNumber, { color: '#F5A623' }]}>{stats.onBreak}</Text>
-            <Text style={styles.statLabel}>Break</Text>
-        </View>
-        <View style={styles.statItem}>
-            <Text style={[styles.statNumber, { color: '#8E8E93' }]}>{stats.checkedOut}</Text>
-            <Text style={styles.statLabel}>Done</Text>
-        </View>
-        <View style={styles.statItem}>
-            <Text style={[styles.statNumber, { color: '#FF3B30' }]}>{stats.offline}</Text>
-            <Text style={styles.statLabel}>Offline</Text>
-        </View>
+        {renderStatCard('briefcase', stats.working, 'Working', ['#10b981', '#059669'])}
+        {renderStatCard('cafe', stats.onBreak, 'On Break', ['#f59e0b', '#d97706'])}
+        {renderStatCard('checkmark-circle', stats.checkedOut, 'Done', ['#6b7280', '#4b5563'])}
+        {renderStatCard('moon', stats.offline, 'Offline', ['#ef4444', '#dc2626'])}
       </View>
 
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by name or email..."
+          placeholderTextColor="#9ca3af"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={20} color="#9ca3af" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* User List */}
       {loading ? (
-        <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 50 }} />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#667eea" />
+          <Text style={styles.loadingText}>Loading users...</Text>
+        </View>
       ) : (
         <FlatList
-          data={users}
+          data={filteredUsers}
           renderItem={renderItem}
           keyExtractor={item => item.uid}
           contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.emptyText}>No users found.</Text>}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="people-outline" size={64} color="#d1d5db" />
+              <Text style={styles.emptyText}>
+                {searchQuery ? 'No users found matching your search' : 'No users found'}
+              </Text>
+            </View>
+          }
         />
       )}
     </View>
@@ -118,33 +220,176 @@ export const AdminDashboardScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f9fafb' 
+  },
   statsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#fff',
-    padding: 20,
-    marginBottom: 10,
-    elevation: 2,
+    justifyContent: 'space-between',
+    padding: 16,
+    gap: 10,
   },
-  statItem: { alignItems: 'center' },
-  statNumber: { fontSize: 24, fontWeight: 'bold' },
-  statLabel: { fontSize: 12, color: '#666', marginTop: 4 },
-  list: { padding: 15 },
+  statCard: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  statNumber: { 
+    fontSize: 24, 
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 8,
+  },
+  statLabel: { 
+    fontSize: 11, 
+    color: 'rgba(255, 255, 255, 0.9)', 
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1f2937',
+  },
+  list: { 
+    padding: 16,
+    paddingTop: 0,
+  },
   card: {
     backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 12,
     elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
   },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  userInfo: { flex: 1 },
-  name: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  email: { fontSize: 12, color: '#888', marginTop: 2 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  details: { flexDirection: 'row', marginTop: 10, borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 10 },
-  detailText: { fontSize: 12, color: '#666', marginRight: 15 },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888' },
+  cardContent: {
+    flexDirection: 'row',
+    padding: 16,
+    alignItems: 'center',
+  },
+  avatarContainer: {
+    marginRight: 12,
+  },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  userInfo: { 
+    flex: 1,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  name: { 
+    fontSize: 16, 
+    fontWeight: 'bold', 
+    color: '#1f2937',
+  },
+  inactiveBadge: {
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  inactiveBadgeText: {
+    fontSize: 10,
+    color: '#dc2626',
+    fontWeight: '600',
+  },
+  email: { 
+    fontSize: 13, 
+    color: '#6b7280', 
+    marginBottom: 6,
+  },
+  lastActiveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  lastActiveText: {
+    fontSize: 11,
+    color: '#9ca3af',
+  },
+  statusContainer: {
+    alignItems: 'flex-end',
+  },
+  statusBadge: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10, 
+    paddingVertical: 6, 
+    borderRadius: 12,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#fff',
+    marginRight: 6,
+  },
+  statusText: { 
+    color: '#fff', 
+    fontSize: 11, 
+    fontWeight: 'bold',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyText: { 
+    textAlign: 'center', 
+    marginTop: 16, 
+    color: '#9ca3af',
+    fontSize: 14,
+  },
 });
