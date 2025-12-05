@@ -32,6 +32,12 @@ export const SettingsScreen = () => {
   const [editValue, setEditValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [fetchingDetails, setFetchingDetails] = useState(true);
+  
+  // Collapseable section states - only Basic Info open by default
+  const [isBasicInfoExpanded, setIsBasicInfoExpanded] = useState(true);
+  const [isProfessionalExpanded, setIsProfessionalExpanded] = useState(false);
+  const [isPersonalExpanded, setIsPersonalExpanded] = useState(false);
+  const [isEmergencyExpanded, setIsEmergencyExpanded] = useState(false);
 
   const db = getFirestore();
 
@@ -226,70 +232,99 @@ export const SettingsScreen = () => {
 
       {/* Basic Information */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>📋 Basic Information</Text>
+        <TouchableOpacity 
+          style={styles.sectionHeaderCollapseable}
+          onPress={() => setIsBasicInfoExpanded(!isBasicInfoExpanded)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.sectionTitle}>📋 Basic Information</Text>
+          <View style={styles.chevronContainer}>
+            <Icon 
+              name={isBasicInfoExpanded ? 'chevron-up-circle' : 'chevron-down-circle'} 
+              size={28} 
+              color="#667eea" 
+            />
+          </View>
+        </TouchableOpacity>
         
-        <View style={styles.infoCard}>
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconContainer}>
-              <Icon name="person-outline" size={20} color="#667eea" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Full Name</Text>
-              <Text style={styles.infoValue}>{user?.name}</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconContainer}>
-              <Icon name="mail-outline" size={20} color="#667eea" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Email Address</Text>
-              <Text style={styles.infoValue}>{user?.email}</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconContainer}>
-              <Icon name="shield-outline" size={20} color="#667eea" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Account Type</Text>
-              <Text style={styles.infoValue}>
-                {user?.role === 'admin' ? 'Administrator' : 'Standard User'}
-              </Text>
-            </View>
-          </View>
-
-          {user?.assignedLocationId && (
-            <>
-              <View style={styles.divider} />
-              <View style={styles.infoRow}>
-                <View style={styles.infoIconContainer}>
-                  <Icon name="location-outline" size={20} color="#667eea" />
-                </View>
-                <View style={styles.infoContent}>
-                  <Text style={styles.infoLabel}>Assigned Location</Text>
-                  <Text style={styles.infoValue}>Location ID: {user.assignedLocationId}</Text>
-                </View>
+        {isBasicInfoExpanded && (
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <View style={styles.infoIconContainer}>
+                <Icon name="person-outline" size={20} color="#667eea" />
               </View>
-            </>
-          )}
-        </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Full Name</Text>
+                <Text style={styles.infoValue}>{user?.name}</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.infoRow}>
+              <View style={styles.infoIconContainer}>
+                <Icon name="mail-outline" size={20} color="#667eea" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Email Address</Text>
+                <Text style={styles.infoValue}>{user?.email}</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.infoRow}>
+              <View style={styles.infoIconContainer}>
+                <Icon name="shield-outline" size={20} color="#667eea" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Account Type</Text>
+                <Text style={styles.infoValue}>
+                  {user?.role === 'admin' ? 'Administrator' : 'Standard User'}
+                </Text>
+              </View>
+            </View>
+
+            {user?.assignedLocationId && (
+              <>
+                <View style={styles.divider} />
+                <View style={styles.infoRow}>
+                  <View style={styles.infoIconContainer}>
+                    <Icon name="location-outline" size={20} color="#667eea" />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Assigned Location</Text>
+                    <Text style={styles.infoValue}>Location ID: {user.assignedLocationId}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Professional Information */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>💼 Professional Information</Text>
-          <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
-        </View>
+        <TouchableOpacity 
+          style={styles.sectionHeaderCollapseable}
+          onPress={() => setIsProfessionalExpanded(!isProfessionalExpanded)}
+          activeOpacity={0.7}
+        >
+          <View>
+            <Text style={styles.sectionTitle}>💼 Professional Information</Text>
+            <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
+          </View>
+          <View style={styles.chevronContainer}>
+            <Icon 
+              name={isProfessionalExpanded ? 'chevron-up-circle' : 'chevron-down-circle'} 
+              size={28} 
+              color="#667eea" 
+            />
+          </View>
+        </TouchableOpacity>
         
-        <View style={styles.infoCard}>
+        {isProfessionalExpanded && (
+          <View style={styles.infoCard}>
           {renderEditableField('employeeId', 'id-card-outline', 'Employee ID', userDetails.employeeId)}
           {renderEditableField('designation', 'briefcase-outline', 'Designation', userDetails.designation)}
           {renderEditableField('department', 'business-outline', 'Department', userDetails.department)}
@@ -313,53 +348,84 @@ export const SettingsScreen = () => {
               <Icon name="create-outline" size={20} color="#667eea" />
             </TouchableOpacity>
           </View>
-        </View>
+          </View>
+        )}
       </View>
 
       {/* Personal Information */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>👤 Personal Information</Text>
-          <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
-        </View>
-        
-        <View style={styles.infoCard}>
-          {renderEditableField('phoneNumber', 'call-outline', 'Phone Number', userDetails.phoneNumber)}
-          {renderEditableField('dateOfBirth', 'gift-outline', 'Date of Birth', userDetails.dateOfBirth)}
-          {renderEditableField('gender', 'male-female-outline', 'Gender', userDetails.gender)}
-          {renderEditableField('bloodGroup', 'water-outline', 'Blood Group', userDetails.bloodGroup)}
-          
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconContainer}>
-              <Icon name="home-outline" size={20} color="#667eea" />
-            </View>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Address</Text>
-              <Text style={[styles.infoValue, !userDetails.address && styles.placeholderText]} numberOfLines={2}>
-                {userDetails.address || 'Not set'}
-              </Text>
-            </View>
-            <TouchableOpacity 
-              style={styles.editButton}
-              onPress={() => handleEditField('address')}
-            >
-              <Icon name="create-outline" size={20} color="#667eea" />
-            </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.sectionHeaderCollapseable}
+          onPress={() => setIsPersonalExpanded(!isPersonalExpanded)}
+          activeOpacity={0.7}
+        >
+          <View>
+            <Text style={styles.sectionTitle}>👤 Personal Information</Text>
+            <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
           </View>
-        </View>
+          <View style={styles.chevronContainer}>
+            <Icon 
+              name={isPersonalExpanded ? 'chevron-up-circle' : 'chevron-down-circle'} 
+              size={28} 
+              color="#667eea" 
+            />
+          </View>
+        </TouchableOpacity>
+        
+        {isPersonalExpanded && (
+          <View style={styles.infoCard}>
+            {renderEditableField('phoneNumber', 'call-outline', 'Phone Number', userDetails.phoneNumber)}
+            {renderEditableField('dateOfBirth', 'gift-outline', 'Date of Birth', userDetails.dateOfBirth)}
+            {renderEditableField('gender', 'male-female-outline', 'Gender', userDetails.gender)}
+            {renderEditableField('bloodGroup', 'water-outline', 'Blood Group', userDetails.bloodGroup)}
+            
+            <View style={styles.infoRow}>
+              <View style={styles.infoIconContainer}>
+                <Icon name="home-outline" size={20} color="#667eea" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Address</Text>
+                <Text style={[styles.infoValue, !userDetails.address && styles.placeholderText]} numberOfLines={2}>
+                  {userDetails.address || 'Not set'}
+                </Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.editButton}
+                onPress={() => handleEditField('address')}
+              >
+                <Icon name="create-outline" size={20} color="#667eea" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Emergency Contact */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>🚨 Emergency Contact</Text>
-          <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
-        </View>
+        <TouchableOpacity 
+          style={styles.sectionHeaderCollapseable}
+          onPress={() => setIsEmergencyExpanded(!isEmergencyExpanded)}
+          activeOpacity={0.7}
+        >
+          <View>
+            <Text style={styles.sectionTitle}>🚨 Emergency Contact</Text>
+            <Text style={styles.sectionSubtitle}>Tap the edit icon to update</Text>
+          </View>
+          <View style={styles.chevronContainer}>
+            <Icon 
+              name={isEmergencyExpanded ? 'chevron-up-circle' : 'chevron-down-circle'} 
+              size={28} 
+              color="#667eea" 
+            />
+          </View>
+        </TouchableOpacity>
         
-        <View style={styles.infoCard}>
-          {renderEditableField('emergencyContactName', 'person-add-outline', 'Emergency Contact Name', userDetails.emergencyContactName)}
-          {renderEditableField('emergencyContactNumber', 'call-outline', 'Emergency Contact Number', userDetails.emergencyContactNumber)}
-        </View>
+        {isEmergencyExpanded && (
+          <View style={styles.infoCard}>
+            {renderEditableField('emergencyContactName', 'person-add-outline', 'Emergency Contact Name', userDetails.emergencyContactName)}
+            {renderEditableField('emergencyContactNumber', 'call-outline', 'Emergency Contact Number', userDetails.emergencyContactNumber)}
+          </View>
+        )}
       </View>
 
       {/* Account Actions */}
@@ -524,6 +590,13 @@ const styles = StyleSheet.create({
   sectionHeader: {
     marginBottom: 15,
   },
+  sectionHeaderCollapseable: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingVertical: 5,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -533,6 +606,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
     marginTop: 4,
+  },
+  chevronContainer: {
+    padding: 4,
   },
   infoCard: {
     backgroundColor: '#fff',
