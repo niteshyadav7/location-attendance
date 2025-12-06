@@ -114,27 +114,34 @@ export const AdminHomeScreen = () => {
       
       <View style={styles.floatingButtons}>
         <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#FF9800' }]}
-            onPress={() => navigation.navigate('AdminNotifications')}
+          style={[styles.actionButton, { backgroundColor: '#FF9800' }]}
+          onPress={() => navigation.navigate('AdminNotifications')}
         >
-            <Text style={styles.actionButtonText}>🔔 Notifications</Text>
-            {unreadNotifCount > 0 && (
+          <Text style={styles.actionButtonText}>🔔 Notifications</Text>
+          {unreadNotifCount > 0 && (
             <View style={styles.badge}>
-                <Text style={styles.badgeText}>{unreadNotifCount}</Text>
+              <Text style={styles.badgeText}>{unreadNotifCount}</Text>
             </View>
-            )}
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#10b981' }]}
-            onPress={() => navigation.navigate('ManageUsers')}
+          style={[styles.actionButton, { backgroundColor: '#10b981' }]}
+          onPress={() => navigation.navigate('ManageUsers')}
         >
-            <Text style={styles.actionButtonText}>👥 Manage Users</Text>
-            {pendingCount > 0 && (
+          <Text style={styles.actionButtonText}>👥 Manage Users</Text>
+          {pendingCount > 0 && (
             <View style={styles.badge}>
-                <Text style={styles.badgeText}>{pendingCount}</Text>
+              <Text style={styles.badgeText}>{pendingCount}</Text>
             </View>
-            )}
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
+          onPress={() => navigation.navigate('Notices')}
+        >
+          <Text style={styles.actionButtonText}>📢 Manage Notices</Text>
         </TouchableOpacity>
       </View>
 

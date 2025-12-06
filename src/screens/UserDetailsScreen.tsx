@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { getFirestore, doc, getDoc, collection, query, where, getDocs, updateDoc } from '@react-native-firebase/firestore';
+import { getFirestore, doc, getDoc, collection, query, where, getDocs, updateDoc, addDoc } from '@react-native-firebase/firestore';
 import { UserProfile, AttendanceRecord, LeaveRequest } from '../types';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -24,6 +24,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
   const [attendanceStats, setAttendanceStats] = useState({
     totalPresent: 0,
     totalLeaves: 0,
@@ -137,6 +138,90 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
               Alert.alert('Error', 'Failed to checkout user. Please try again.');
             } finally {
               setCheckingOut(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCheckin = async () => {
+    if (!user) return;
+
+    Alert.alert(
+      'Check-in User',
+      `Are you sure you want to check-in ${user.name}? This will create a new attendance record for today.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Check-in',
+          style: 'default',
+          onPress: async () => {
+            try {
+              setCheckingIn(true);
+              const db = getFirestore();
+              const now = Date.now();
+              const today = new Date().toISOString().split('T')[0];
+
+              // Check if there's already an attendance record for today
+              const todayAttendanceQuery = query(
+                collection(db, 'attendance'),
+                where('userId', '==', userId),
+                where('date', '==', today)
+              );
+              const todaySnapshot = await getDocs(todayAttendanceQuery);
+
+              if (!todaySnapshot.empty) {
+                // Update existing record - remove checkout time
+                const existingDoc = todaySnapshot.docs[0];
+                await updateDoc(doc(db, 'attendance', existingDoc.id), {
+                  checkOutTime: null,
+                  status: 'PRESENT',
+                });
+                setCurrentAttendanceId(existingDoc.id);
+              } else {
+                // Create new attendance record
+                const newAttendanceRef = await addDoc(collection(db, 'attendance'), {
+                  userId: user.uid,
+                  userName: user.name,
+                  locationId: user.assignedLocationId || '',
+                  locationName: locationName,
+                  date: today,
+                  checkInTime: now,
+                  breaks: [],
+                  status: 'PRESENT',
+                });
+                setCurrentAttendanceId(newAttendanceRef.id);
+              }
+
+              // Update user status
+              await updateDoc(doc(db, 'users', userId), {
+                currentStatus: 'WORKING',
+                lastActive: now,
+              });
+
+              // Send notification
+              await addDoc(collection(db, 'notifications'), {
+                type: 'CHECK_IN',
+                userId: user.uid,
+                userName: user.name,
+                message: `${user.name} was checked in by admin`,
+                timestamp: now,
+                read: false,
+              });
+
+              Alert.alert('Success', `${user.name} has been checked in successfully`);
+              
+              // Refresh user details
+              await fetchUserDetails();
+            } catch (error) {
+              console.error('Error checking in user:', error);
+              Alert.alert('Error', 'Failed to check-in user. Please try again.');
+            } finally {
+              setCheckingIn(false);
             }
           },
         },
@@ -303,6 +388,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
   };
 
   const canCheckout = user?.currentStatus === 'WORKING' || user?.currentStatus === 'ON_BREAK';
+  const canCheckin = user?.currentStatus === 'CHECKED_OUT' || !user?.currentStatus || user?.currentStatus === 'OFFLINE';
 
   if (loading) {
     return (
@@ -348,7 +434,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
           </Text>
         )}
 
-        {/* Admin Checkout Button */}
+        {/* Admin Action Buttons */}
         {canCheckout && currentAttendanceId && (
           <TouchableOpacity
             style={styles.checkoutButton}
@@ -361,6 +447,23 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
               <>
                 <Ionicons name="log-out-outline" size={20} color="#fff" />
                 <Text style={styles.checkoutButtonText}>Checkout User</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {canCheckin && (
+          <TouchableOpacity
+            style={styles.checkinButton}
+            onPress={handleCheckin}
+            disabled={checkingIn}
+          >
+            {checkingIn ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="log-in-outline" size={20} color="#fff" />
+                <Text style={styles.checkinButtonText}>Check-in User</Text>
               </>
             )}
           </TouchableOpacity>
@@ -599,6 +702,28 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   checkoutButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  checkinButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.9)',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 16,
+    marginTop: 8,
+    gap: 8,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  checkinButtonText: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '700',

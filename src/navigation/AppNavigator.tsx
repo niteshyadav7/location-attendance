@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
-import { getFirestore, doc, getDoc } from '@react-native-firebase/firestore';
+import { getFirestore, doc, getDoc, collection, query, where, onSnapshot } from '@react-native-firebase/firestore';
 import { useAuthStore } from '../store/useAuthStore';
 import { LoginScreen } from '../screens/LoginScreen';
 import { AdminHomeScreen } from '../screens/AdminHomeScreen';
@@ -24,6 +24,9 @@ import { UserProfile } from '../types';
 import { ActivityIndicator, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { adminNotificationListener } from '../services/adminNotificationListener';
+
+
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -35,6 +38,7 @@ const AdminStack = () => (
     <Stack.Screen name="EditLocation" component={EditLocationScreen} options={{ title: 'Edit Location' }} />
     <Stack.Screen name="ManageUsers" component={ManageUsersScreen} options={{ title: 'Manage Users' }} />
     <Stack.Screen name="AdminNotifications" component={AdminNotificationScreen} options={{ title: 'Notifications' }} />
+    <Stack.Screen name="Notices" component={AdminNoticeScreen} options={{ title: 'Manage Notices' }} />
   </Stack.Navigator>
 );
 
@@ -53,38 +57,65 @@ const DashboardStack = () => (
   </Stack.Navigator>
 );
 
-const AdminTabs = () => (
-  <Tab.Navigator screenOptions={({ route }) => ({
-    tabBarIcon: ({ focused, color, size }) => {
-      let iconName;
-      if (route.name === 'Dashboard') iconName = focused ? 'grid' : 'grid-outline';
-      else if (route.name === 'Locations') iconName = focused ? 'map' : 'map-outline';
-      else if (route.name === 'Notices') iconName = focused ? 'megaphone' : 'megaphone-outline';
-      else if (route.name === 'Leaves') iconName = focused ? 'calendar' : 'calendar-outline';
-      else if (route.name === 'History') iconName = focused ? 'time' : 'time-outline';
-      else if (route.name === 'Profile') iconName = focused ? 'person' : 'person-outline';
-      return <Ionicons name={iconName as any} size={size} color={color} />;
-    },
-    tabBarActiveTintColor: '#667eea',
-    tabBarInactiveTintColor: '#999',
-    tabBarStyle: {
-      backgroundColor: '#fff',
-      borderTopWidth: 1,
-      borderTopColor: '#e9ecef',
-      elevation: 8,
-      height: 60,
-      paddingBottom: 8,
-      paddingTop: 8,
-    },
-  })}>
-    <Tab.Screen name="Dashboard" component={DashboardStack} options={{ headerShown: false }} />
-    <Tab.Screen name="Locations" component={AdminStack} options={{ headerShown: false }} />
-    <Tab.Screen name="Notices" component={AdminNoticeScreen} options={{ title: 'Notice Board' }} />
-    <Tab.Screen name="Leaves" component={AdminLeaveScreen} />
-    <Tab.Screen name="History" component={HistoryScreen} />
-    <Tab.Screen name="Profile" component={SettingsScreen} options={{ title: 'Profile' }} />
-  </Tab.Navigator>
-);
+const AdminTabs = () => {
+  const [unreadCount, setUnreadCount] = React.useState(0);
+
+  // Listen for unread notifications count
+  React.useEffect(() => {
+    const db = getFirestore();
+    const q = query(
+      collection(db, 'notifications'),
+      where('read', '==', false)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setUnreadCount(snapshot.size);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  return (
+    <Tab.Navigator screenOptions={({ route }) => ({
+      tabBarIcon: ({ focused, color, size }) => {
+        let iconName;
+        if (route.name === 'Dashboard') iconName = focused ? 'grid' : 'grid-outline';
+        else if (route.name === 'Locations') iconName = focused ? 'map' : 'map-outline';
+        else if (route.name === 'Notifications') iconName = focused ? 'notifications' : 'notifications-outline';
+        else if (route.name === 'Leaves') iconName = focused ? 'calendar' : 'calendar-outline';
+        else if (route.name === 'History') iconName = focused ? 'time' : 'time-outline';
+        else if (route.name === 'Profile') iconName = focused ? 'person' : 'person-outline';
+        return <Ionicons name={iconName as any} size={size} color={color} />;
+      },
+      tabBarActiveTintColor: '#667eea',
+      tabBarInactiveTintColor: '#999',
+      tabBarStyle: {
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#e9ecef',
+        elevation: 8,
+        height: 60,
+        paddingBottom: 8,
+        paddingTop: 8,
+      },
+    })}>
+      <Tab.Screen name="Dashboard" component={DashboardStack} options={{ headerShown: false }} />
+      <Tab.Screen name="Locations" component={AdminStack} options={{ headerShown: false }} />
+      <Tab.Screen 
+        name="Notifications" 
+        component={AdminNotificationScreen} 
+        options={{ 
+          title: 'Notifications',
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          tabBarBadgeStyle: { backgroundColor: '#FF3B30', color: '#fff' }
+        }} 
+      />
+      <Tab.Screen name="Leaves" component={AdminLeaveScreen} />
+      <Tab.Screen name="History" component={HistoryScreen} />
+      <Tab.Screen name="Profile" component={SettingsScreen} options={{ title: 'Profile' }} />
+    </Tab.Navigator>
+  );
+};
 
 const UserTabs = () => (
   <Tab.Navigator screenOptions={({ route }) => ({
@@ -144,6 +175,11 @@ export const AppNavigator = () => {
           } else {
             // User is approved and active - allow access
             setUser(userData);
+            
+            // Start listening for notifications if admin
+            if (userData.role === 'admin') {
+              adminNotificationListener.startListening(firebaseUser.uid);
+            }
           }
         } else {
              // Fallback if user doc missing but auth exists
@@ -151,6 +187,8 @@ export const AppNavigator = () => {
              setUser(null);
         }
       } else {
+        // User logged out - stop listening
+        adminNotificationListener.stopListening();
         setUser(null);
       }
       setLoading(false);

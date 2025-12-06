@@ -5,6 +5,9 @@ import { getFirestore, doc, updateDoc, getDoc } from '@react-native-firebase/fir
 import { useAuthStore } from '../store/useAuthStore';
 import Icon from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
+import { adminNotificationListener } from '../services/adminNotificationListener';
+
+
 
 interface UserDetails {
   phoneNumber?: string;
@@ -89,6 +92,12 @@ export const SettingsScreen = () => {
           onPress: async () => {
             try {
               const auth = getAuth();
+              
+              // Stop listening for notifications if admin
+              if (user?.role === 'admin') {
+                adminNotificationListener.stopListening();
+              }
+              
               await signOut(auth);
               setUser(null);
             } catch (error: any) {

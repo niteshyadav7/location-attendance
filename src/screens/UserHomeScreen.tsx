@@ -342,15 +342,29 @@ export const UserHomeScreen = () => {
   };
 
   const handleCheckOut = async () => {
-    if (!attendanceDocId || !attendanceRecord || !user) return;
+    if (!attendanceDocId || !attendanceRecord || !user || !assignedLocation) return;
     
     setLoading(true);
-    let breaks = [...attendanceRecord.breaks];
-    if (attendanceRecord.status === 'ON_BREAK' && breaks.length > 0) {
-        breaks[breaks.length - 1].endTime = Date.now();
-    }
-
+    
     try {
+        // Check if user is within radius before allowing checkout
+        const pos = await getCurrentLocation();
+        const dist = calculateDistance(
+            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+            { latitude: assignedLocation.latitude, longitude: assignedLocation.longitude }
+        );
+        
+        if (dist > assignedLocation.radius) {
+            Alert.alert('Out of Range', `You are ${Math.round(dist)}m away. Must be within ${assignedLocation.radius}m to checkout.`);
+            setLoading(false);
+            return;
+        }
+
+        let breaks = [...attendanceRecord.breaks];
+        if (attendanceRecord.status === 'ON_BREAK' && breaks.length > 0) {
+            breaks[breaks.length - 1].endTime = Date.now();
+        }
+
         await updateDoc(doc(db, 'attendance', attendanceDocId), {
             status: 'CHECKED_OUT',
             checkOutTime: Date.now(),
