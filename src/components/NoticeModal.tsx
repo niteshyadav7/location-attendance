@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
 import { Notice } from '../types';
+import { COLORS } from '../constants/theme';
 
 interface NoticeModalProps {
   notice: Notice | null;
@@ -14,15 +15,15 @@ export const NoticeModal: React.FC<NoticeModalProps> = ({ notice, visible, onClo
   const getPriorityColor = () => {
     switch (notice.priority) {
       case 'urgent':
-        return '#E74C3C';
+        return COLORS.priority.urgent;
       case 'high':
-        return '#F39C12';
+        return COLORS.priority.high;
       case 'medium':
-        return '#3498DB';
+        return COLORS.priority.normal;
       case 'low':
-        return '#95A5A6';
+        return COLORS.priority.low;
       default:
-        return '#95A5A6';
+        return COLORS.priority.low;
     }
   };
 
@@ -127,7 +128,7 @@ const styles = StyleSheet.create({
     padding: moderateScale(20),
   },
   modalContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.white,
     borderRadius: moderateScale(20),
     width: '100%',
     maxWidth: 500,
@@ -150,7 +151,7 @@ const styles = StyleSheet.create({
     fontSize: moderateScale(24),
   },
   priorityText: {
-    color: '#FFFFFF',
+    color: COLORS.white,
     fontSize: moderateScale(14),
     fontWeight: 'bold',
     letterSpacing: 1,
@@ -161,36 +162,36 @@ const styles = StyleSheet.create({
   title: {
     fontSize: moderateScale(24),
     fontWeight: 'bold',
-    color: '#1A1A1A',
+    color: COLORS.text.primary,
     marginBottom: moderateScale(8),
     lineHeight: moderateScale(32),
   },
   date: {
     fontSize: moderateScale(13),
-    color: '#6B7280',
+    color: COLORS.text.secondary,
     marginBottom: moderateScale(16),
   },
   divider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#E5E7EB', // Could use 'COLORS.border' if it existed, or text.light
     marginBottom: moderateScale(16),
   },
   message: {
     fontSize: moderateScale(16),
-    color: '#374151',
+    color: COLORS.text.primary,
     lineHeight: moderateScale(24),
     marginBottom: moderateScale(16),
   },
   expiryContainer: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#FEF3C7', // Keep simplified tint or use COLORS tint if available
     padding: moderateScale(12),
     borderRadius: moderateScale(8),
     borderLeftWidth: 3,
-    borderLeftColor: '#F59E0B',
+    borderLeftColor: COLORS.priority.high,
   },
   expiryText: {
     fontSize: moderateScale(13),
-    color: '#92400E',
+    color: '#92400E', // Dark orange/brown
     fontWeight: '600',
   },
   closeButton: {
@@ -199,7 +200,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   closeButtonText: {
-    color: '#FFFFFF',
+    color: COLORS.white,
     fontSize: moderateScale(16),
     fontWeight: 'bold',
   },

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,17 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
+  TextInput,
+  Switch,
 } from 'react-native';
-import { getFirestore, doc, getDoc, collection, query, where, getDocs, updateDoc, addDoc } from '@react-native-firebase/firestore';
-import { UserProfile, AttendanceRecord, LeaveRequest } from '../types';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { AttendanceRecord } from '../types';
+import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
+import { COLORS } from '../constants/theme';
+import { useAdminUserDetails } from '../hooks/useAdminUserDetails';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+import { useAds } from '../hooks/useAds';
 
 interface UserDetailsScreenProps {
   route: any;
@@ -21,341 +26,40 @@ interface UserDetailsScreenProps {
 
 export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, navigation }) => {
   const { userId } = route.params;
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [checkingOut, setCheckingOut] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
-  const [attendanceStats, setAttendanceStats] = useState({
-    totalPresent: 0,
-    totalLeaves: 0,
-    totalWorkingHours: 0,
-    avgCheckInTime: '',
-    avgCheckOutTime: '',
-  });
-  const [recentAttendance, setRecentAttendance] = useState<AttendanceRecord[]>([]);
-  const [locationName, setLocationName] = useState('Not Assigned');
-  const [currentAttendanceId, setCurrentAttendanceId] = useState<string | null>(null);
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('userDetails');
+  const {
+    user,
+    loading,
+    locationName,
+    attendanceStats,
+    recentAttendance,
+    currentAttendanceId,
+    checkingOut,
+    checkingIn,
+    handleCheckin,
+    handleCheckout,
+    resetDeviceLock,
+    updateBreakSettings,
+    handleStartBreak,
+    handleEndBreak,
+    startingBreak,
+    endingBreak,
+  } = useAdminUserDetails(userId);
 
-  useEffect(() => {
-    fetchUserDetails();
-  }, [userId]);
+  // Break Settings State
 
-  const fetchUserDetails = async () => {
-    try {
-      const db = getFirestore();
-      
-      // Fetch user data
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (userDoc.exists()) {
-        const userData = { ...userDoc.data(), uid: userDoc.id } as UserProfile;
-        setUser(userData);
 
-        // Fetch location name if assigned
-        if (userData.assignedLocationId) {
-          const locationDoc = await getDoc(doc(db, 'locations', userData.assignedLocationId));
-          if (locationDoc.exists()) {
-            setLocationName(locationDoc.data()?.name || 'Unknown Location');
-          }
-        }
 
-        // Check if user has any active (unchecked-out) attendance
-        // Note: Firestore doesn't support querying for null, so we fetch all and filter
-        const attendanceQuery = query(
-          collection(db, 'attendance'),
-          where('userId', '==', userId)
-        );
-        const attendanceSnapshot = await getDocs(attendanceQuery);
-        
-        // Find the most recent unchecked-out attendance
-        let mostRecentUncheckedOut = null;
-        let mostRecentTime = 0;
-        
-        attendanceSnapshot.forEach((doc: any) => {
-          const data = doc.data() as AttendanceRecord;
-          
-          if (!data.checkOutTime && data.checkInTime > mostRecentTime) {
-            mostRecentUncheckedOut = doc.id;
-            mostRecentTime = data.checkInTime;
-          }
-        });
-        
-        if (mostRecentUncheckedOut) {
-          setCurrentAttendanceId(mostRecentUncheckedOut);
-        }
 
-        // Fetch attendance stats for current month
-        await fetchAttendanceStats(userId);
-        
-        // Fetch recent attendance records
-        await fetchRecentAttendance(userId);
-      }
-    } catch (error) {
-      console.error('Error fetching user details:', error);
-      Alert.alert('Error', 'Failed to load user details');
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const handleCheckout = async () => {
-    if (!currentAttendanceId || !user) return;
-
-    Alert.alert(
-      'Checkout User',
-      `Are you sure you want to checkout ${user.name}?`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Checkout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setCheckingOut(true);
-              const db = getFirestore();
-              const now = Date.now();
-
-              // Update attendance record
-              await updateDoc(doc(db, 'attendance', currentAttendanceId), {
-                checkOutTime: now,
-                status: 'CHECKED_OUT',
-              });
-
-              // Update user status
-              await updateDoc(doc(db, 'users', userId), {
-                currentStatus: 'CHECKED_OUT',
-                lastActive: now,
-              });
-
-              Alert.alert('Success', `${user.name} has been checked out successfully`);
-              
-              // Refresh user details
-              await fetchUserDetails();
-            } catch (error) {
-              console.error('Error checking out user:', error);
-              Alert.alert('Error', 'Failed to checkout user. Please try again.');
-            } finally {
-              setCheckingOut(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleCheckin = async () => {
-    if (!user) return;
-
-    Alert.alert(
-      'Check-in User',
-      `Are you sure you want to check-in ${user.name}? This will create a new attendance record for today.`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Check-in',
-          style: 'default',
-          onPress: async () => {
-            try {
-              setCheckingIn(true);
-              const db = getFirestore();
-              const now = Date.now();
-              const today = new Date().toISOString().split('T')[0];
-
-              // Check if there's already an attendance record for today
-              const todayAttendanceQuery = query(
-                collection(db, 'attendance'),
-                where('userId', '==', userId),
-                where('date', '==', today)
-              );
-              const todaySnapshot = await getDocs(todayAttendanceQuery);
-
-              if (!todaySnapshot.empty) {
-                // Update existing record - remove checkout time
-                const existingDoc = todaySnapshot.docs[0];
-                await updateDoc(doc(db, 'attendance', existingDoc.id), {
-                  checkOutTime: null,
-                  status: 'PRESENT',
-                });
-                setCurrentAttendanceId(existingDoc.id);
-              } else {
-                // Create new attendance record
-                const newAttendanceRef = await addDoc(collection(db, 'attendance'), {
-                  userId: user.uid,
-                  userName: user.name,
-                  locationId: user.assignedLocationId || '',
-                  locationName: locationName,
-                  date: today,
-                  checkInTime: now,
-                  breaks: [],
-                  status: 'PRESENT',
-                });
-                setCurrentAttendanceId(newAttendanceRef.id);
-              }
-
-              // Update user status
-              await updateDoc(doc(db, 'users', userId), {
-                currentStatus: 'WORKING',
-                lastActive: now,
-              });
-
-              // Send notification
-              await addDoc(collection(db, 'notifications'), {
-                type: 'CHECK_IN',
-                userId: user.uid,
-                userName: user.name,
-                message: `${user.name} was checked in by admin`,
-                timestamp: now,
-                read: false,
-              });
-
-              Alert.alert('Success', `${user.name} has been checked in successfully`);
-              
-              // Refresh user details
-              await fetchUserDetails();
-            } catch (error) {
-              console.error('Error checking in user:', error);
-              Alert.alert('Error', 'Failed to check-in user. Please try again.');
-            } finally {
-              setCheckingIn(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const fetchAttendanceStats = async (uid: string) => {
-    try {
-      const db = getFirestore();
-      const now = new Date();
-      const monthStart = format(startOfMonth(now), 'yyyy-MM-dd');
-      const monthEnd = format(endOfMonth(now), 'yyyy-MM-dd');
-
-      // Fetch all attendance records for this user (no date filter to avoid composite index)
-      const attendanceQuery = query(
-        collection(db, 'attendance'),
-        where('userId', '==', uid)
-      );
-      const attendanceSnapshot = await getDocs(attendanceQuery);
-      
-      let totalPresent = 0;
-      let totalWorkingMinutes = 0;
-      let checkInTimes: number[] = [];
-      let checkOutTimes: number[] = [];
-
-      attendanceSnapshot.forEach((doc: any) => {
-        const record = doc.data() as AttendanceRecord;
-        
-        // Filter by date in JavaScript
-        if (record.date >= monthStart && record.date <= monthEnd) {
-          totalPresent++;
-          
-          if (record.checkInTime) {
-            checkInTimes.push(record.checkInTime);
-          }
-          
-          if (record.checkOutTime && record.checkInTime) {
-            checkOutTimes.push(record.checkOutTime);
-            const workingMinutes = (record.checkOutTime - record.checkInTime) / (1000 * 60);
-            
-            // Subtract break time
-            if (record.breaks && record.breaks.length > 0) {
-              record.breaks.forEach((breakSession) => {
-                if (breakSession.endTime) {
-                  const breakMinutes = (breakSession.endTime - breakSession.startTime) / (1000 * 60);
-                  totalWorkingMinutes += (workingMinutes - breakMinutes);
-                }
-              });
-            } else {
-              totalWorkingMinutes += workingMinutes;
-            }
-          }
-        }
-      });
-
-      // Fetch approved leaves for this user
-      const leavesQuery = query(
-        collection(db, 'leaves'),
-        where('userId', '==', uid),
-        where('status', '==', 'APPROVED')
-      );
-      const leavesSnapshot = await getDocs(leavesQuery);
-      let totalLeaves = 0;
-      
-      leavesSnapshot.forEach((doc: any) => {
-        const leave = doc.data() as LeaveRequest;
-        const leaveStart = new Date(leave.startDate);
-        const leaveEnd = new Date(leave.endDate);
-        const monthStartDate = startOfMonth(now);
-        const monthEndDate = endOfMonth(now);
-        
-        // Count days that fall within current month
-        let currentDate = new Date(Math.max(leaveStart.getTime(), monthStartDate.getTime()));
-        const endDate = new Date(Math.min(leaveEnd.getTime(), monthEndDate.getTime()));
-        
-        while (currentDate <= endDate) {
-          totalLeaves++;
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
-      });
-
-      // Calculate averages
-      const avgCheckIn = checkInTimes.length > 0
-        ? format(new Date(checkInTimes.reduce((a, b) => a + b, 0) / checkInTimes.length), 'h:mm a')
-        : 'N/A';
-      
-      const avgCheckOut = checkOutTimes.length > 0
-        ? format(new Date(checkOutTimes.reduce((a, b) => a + b, 0) / checkOutTimes.length), 'h:mm a')
-        : 'N/A';
-
-      setAttendanceStats({
-        totalPresent,
-        totalLeaves,
-        totalWorkingHours: Math.round(totalWorkingMinutes / 60 * 10) / 10,
-        avgCheckInTime: avgCheckIn,
-        avgCheckOutTime: avgCheckOut,
-      });
-    } catch (error) {
-      console.error('Error fetching attendance stats:', error);
-    }
-  };
-
-  const fetchRecentAttendance = async (uid: string) => {
-    try {
-      const db = getFirestore();
-      // Fetch all attendance for this user (no orderBy to avoid composite index)
-      const attendanceQuery = query(
-        collection(db, 'attendance'),
-        where('userId', '==', uid)
-      );
-      const snapshot = await getDocs(attendanceQuery);
-      const records: AttendanceRecord[] = [];
-      snapshot.forEach((doc: any) => {
-        records.push({ ...doc.data(), id: doc.id } as AttendanceRecord);
-      });
-      
-      // Sort by checkInTime in JavaScript and take last 5
-      const sortedRecords = records
-        .sort((a, b) => b.checkInTime - a.checkInTime)
-        .slice(0, 5);
-      
-      setRecentAttendance(sortedRecords);
-    } catch (error) {
-      console.error('Error fetching recent attendance:', error);
-    }
-  };
 
   const getStatusColor = (status?: string) => {
     switch (status) {
-      case 'WORKING': return '#10b981';
-      case 'ON_BREAK': return '#f59e0b';
-      case 'CHECKED_OUT': return '#6b7280';
-      default: return '#ef4444';
+      case 'WORKING': return COLORS.status.working;
+      case 'ON_BREAK': return COLORS.status.onBreak;
+      case 'CHECKED_OUT': return COLORS.status.checkedOut;
+      default: return COLORS.status.offline;
     }
   };
 
@@ -393,7 +97,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#667eea" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
       </View>
     );
   }
@@ -407,10 +111,10 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       {/* Header Card with Gradient */}
       <LinearGradient
-        colors={['#667eea', '#764ba2']}
+        colors={COLORS.gradients.primary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.headerCard}
@@ -442,10 +146,10 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
             disabled={checkingOut}
           >
             {checkingOut ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={COLORS.white} />
             ) : (
               <>
-                <Ionicons name="log-out-outline" size={20} color="#fff" />
+                <Ionicons name="log-out-outline" size={20} color={COLORS.white} />
                 <Text style={styles.checkoutButtonText}>Checkout User</Text>
               </>
             )}
@@ -459,11 +163,46 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
             disabled={checkingIn}
           >
             {checkingIn ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={COLORS.white} />
             ) : (
               <>
-                <Ionicons name="log-in-outline" size={20} color="#fff" />
+                <Ionicons name="log-in-outline" size={20} color={COLORS.white} />
                 <Text style={styles.checkinButtonText}>Check-in User</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {/* Break Management Buttons */}
+        {user?.currentStatus === 'WORKING' && currentAttendanceId && (
+          <TouchableOpacity
+            style={styles.breakButton}
+            onPress={handleStartBreak}
+            disabled={startingBreak}
+          >
+            {startingBreak ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <>
+                <Ionicons name="cafe-outline" size={20} color={COLORS.white} />
+                <Text style={styles.breakButtonText}>Start Break</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {user?.currentStatus === 'ON_BREAK' && currentAttendanceId && (
+          <TouchableOpacity
+            style={styles.breakButton}
+            onPress={handleEndBreak}
+            disabled={endingBreak}
+          >
+            {endingBreak ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <>
+                <Ionicons name="briefcase-outline" size={20} color={COLORS.white} />
+                <Text style={styles.breakButtonText}>End Break</Text>
               </>
             )}
           </TouchableOpacity>
@@ -477,17 +216,17 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
             <View style={styles.infoItem}>
-              <Ionicons name="briefcase-outline" size={20} color="#667eea" />
+              <Ionicons name="briefcase-outline" size={20} color={COLORS.primary} />
               <Text style={styles.infoLabel}>Role</Text>
             </View>
-            <Text style={styles.infoValue}>{user.role === 'admin' ? 'Administrator' : 'Employee'}</Text>
+            <Text style={styles.infoValue}>{user.role === 'company_admin' ? 'Administrator' : 'Employee'}</Text>
           </View>
 
           <View style={styles.divider} />
 
           <View style={styles.infoRow}>
             <View style={styles.infoItem}>
-              <Ionicons name="location-outline" size={20} color="#667eea" />
+              <Ionicons name="location-outline" size={20} color={COLORS.primary} />
               <Text style={styles.infoLabel}>Assigned Location</Text>
             </View>
             <Text style={styles.infoValue}>{locationName}</Text>
@@ -495,23 +234,87 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
 
           <View style={styles.divider} />
 
-          <View style={styles.infoRow}>
-            <View style={styles.infoItem}>
-              <Ionicons name="checkmark-circle-outline" size={20} color="#667eea" />
-              <Text style={styles.infoLabel}>Account Status</Text>
+          {user.appVersion && (
+            <>
+            <View style={styles.infoRow}>
+              <View style={styles.infoItem}>
+                <Ionicons name="smartphone-outline" size={20} color={COLORS.primary} />
+                <Text style={styles.infoLabel}>App Version</Text>
+              </View>
+              <Text style={styles.infoValue}>v{user.appVersion}</Text>
             </View>
-            <View style={[styles.accountStatusBadge, { 
-              backgroundColor: user.isActive === false ? '#fee2e2' : '#d1fae5' 
-            }]}>
-              <Text style={[styles.accountStatusText, { 
-                color: user.isActive === false ? '#dc2626' : '#059669' 
-              }]}>
-                {user.isActive === false ? 'Inactive' : 'Active'}
-              </Text>
-            </View>
-          </View>
+            <View style={styles.divider} />
+            </>
+          )}
+
+
+            <View style={styles.divider} />
+
+            <View style={styles.infoRow}>
+              <View style={styles.infoItem}>
+                <Ionicons name="phone-portrait-outline" size={20} color={COLORS.primary} />
+                <Text style={styles.infoLabel}>Device Lock</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end', gap: 5 }}>
+                  <View style={[styles.accountStatusBadge, { 
+                      backgroundColor: user.registeredDeviceId ? '#e0f2fe' : '#fff7ed' 
+                  }]}>
+                    <Text style={[styles.accountStatusText, { 
+                        color: user.registeredDeviceId ? '#0369a1' : '#c2410c' 
+                    }]}>
+                      {user.registeredDeviceId ? 'Locked to Device' : 'No Device Linked'}
+                    </Text>
+                  </View>
+                  {user.deviceResetRequested && (
+                      <View style={[styles.accountStatusBadge, { backgroundColor: '#fef2f2' }]}>
+                          <Text style={[styles.accountStatusText, { color: '#dc2626' }]}>Reset Requested</Text>
+                      </View>
+                  )}
+              </View>
+             </View>
+              
+             <View style={{ marginTop: 10 }}>
+                {user.deviceResetRequested ? (
+                    <TouchableOpacity 
+                        style={[styles.actionButton, { backgroundColor: COLORS.status.working }]}
+                        onPress={resetDeviceLock}
+                    >
+                         <Ionicons name="refresh-circle" size={20} color={COLORS.white} />
+                         <Text style={styles.actionButtonText}>Approve Device Reset</Text>
+                    </TouchableOpacity>
+                ) : user.registeredDeviceId ? (
+                    <TouchableOpacity 
+                        style={[styles.actionButton, { backgroundColor: '#64748b' }]}
+                        onPress={() => {
+                            Alert.alert('Reset Device Lock', 'Are you sure? The user will be able to link a new phone on their next login.', [
+                                { text: 'Cancel', style: 'cancel' },
+                                { text: 'Reset', onPress: resetDeviceLock }
+                            ]);
+                        }}
+                    >
+                         <Ionicons name="phone-portrait" size={20} color={COLORS.white} />
+                         <Text style={styles.actionButtonText}>Unlink Device</Text>
+                    </TouchableOpacity>
+                ) : null}
+             </View>
+
+             <View style={styles.divider} />
+             <TouchableOpacity 
+                  style={[styles.infoRow, { justifyContent: 'space-between', marginTop: 5 }]}
+                  onPress={() => navigation.navigate('UserWalletHistory', { targetUserId: userId })}
+             >
+                  <View style={styles.infoItem}>
+                      <Ionicons name="wallet-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.infoLabel}>Wallet & Advances History</Text>
+                  </View>
+                  <Ionicons name="chevron-forward-outline" size={20} color={COLORS.text.secondary} />
+             </TouchableOpacity>
         </View>
       </View>
+
+
+      {/* Break Policy Section Override */}
+
 
       {/* Monthly Stats Section */}
       <View style={styles.section}>
@@ -550,7 +353,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
         
         {recentAttendance.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Ionicons name="document-text-outline" size={48} color="#9ca3af" />
+            <Ionicons name="document-text-outline" size={48} color={COLORS.text.light} />
             <Text style={styles.emptyText}>No attendance records yet</Text>
           </View>
         ) : (
@@ -558,7 +361,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
             <View key={record.id} style={styles.attendanceCard}>
               <View style={styles.attendanceHeader}>
                 <View style={styles.dateContainer}>
-                  <Ionicons name="calendar" size={16} color="#667eea" />
+                  <Ionicons name="calendar" size={16} color={COLORS.primary} />
                   <Text style={styles.dateText}>{format(new Date(record.date), 'MMM dd, yyyy')}</Text>
                 </View>
                 <View style={[styles.statusChip, { backgroundColor: record.checkOutTime ? '#d1fae5' : '#fef3c7' }]}>
@@ -584,7 +387,7 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
                 )}
 
                 <View style={styles.timeRow}>
-                  <Ionicons name="time-outline" size={16} color="#667eea" />
+                  <Ionicons name="time-outline" size={16} color={COLORS.primary} />
                   <Text style={styles.timeLabel}>Working:</Text>
                   <Text style={styles.timeValue}>{calculateWorkingHours(record)}</Text>
                 </View>
@@ -601,6 +404,18 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
           ))
         )}
       </View>
+      
+      <View style={{ alignItems: 'center', marginVertical: 20 }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
     </ScrollView>
   );
 };
@@ -608,17 +423,17 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
   errorText: {
     fontSize: 16,
-    color: '#6b7280',
+    color: COLORS.text.secondary,
   },
   headerCard: {
     padding: 24,
@@ -642,17 +457,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: COLORS.white,
   },
   avatarText: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: '#fff',
+    color: COLORS.white,
   },
   userName: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#fff',
+    color: COLORS.white,
     marginBottom: 4,
   },
   userEmail: {
@@ -672,11 +487,11 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     marginRight: 8,
   },
   statusText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -702,7 +517,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   checkoutButtonText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -724,7 +539,29 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   checkinButtonText: {
-    color: '#fff',
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  breakButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.9)', // Amber-500
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 16,
+    marginTop: 8,
+    gap: 8,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  breakButtonText: {
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -735,11 +572,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#1f2937',
+    color: COLORS.text.primary,
     marginBottom: 12,
   },
   infoCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 16,
     elevation: 2,
@@ -761,12 +598,12 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 14,
-    color: '#6b7280',
+    color: COLORS.text.secondary,
     fontWeight: '500',
   },
   infoValue: {
     fontSize: 14,
-    color: '#1f2937',
+    color: COLORS.text.primary,
     fontWeight: '600',
   },
   divider: {
@@ -798,28 +635,28 @@ const styles = StyleSheet.create({
   statNumber: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginTop: 8,
+    marginBottom: 4,
   },
   statLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
-    textAlign: 'center',
+    fontSize: 13,
+    color: '#4b5563',
+    fontWeight: '500',
   },
   emptyCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 16,
-    padding: 40,
+    padding: 32,
     alignItems: 'center',
+    justifyContent: 'center',
     elevation: 1,
   },
   emptyText: {
-    fontSize: 14,
-    color: '#9ca3af',
     marginTop: 12,
+    color: COLORS.text.light,
+    fontSize: 16,
   },
   attendanceCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -833,7 +670,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
@@ -844,9 +681,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dateText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1f2937',
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text.primary,
   },
   statusChip: {
     paddingHorizontal: 10,
@@ -854,7 +691,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   statusChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
   },
   attendanceDetails: {
@@ -866,13 +703,40 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   timeLabel: {
-    fontSize: 13,
-    color: '#6b7280',
-    flex: 1,
+    width: 80,
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    fontWeight: '500',
   },
   timeValue: {
-    fontSize: 13,
-    color: '#1f2937',
+    fontSize: 14,
+    color: COLORS.text.primary,
     fontWeight: '600',
   },
+  actionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 12,
+      borderRadius: 12,
+      gap: 8,
+  },
+  actionButtonText: {
+      color: COLORS.white,
+      fontWeight: '600',
+      fontSize: 14,
+  },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  label: { fontSize: 14, color: COLORS.text.secondary, marginBottom: 5 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 10,
+    fontSize: 16,
+    backgroundColor: COLORS.white,
+    color: COLORS.text.primary,
+  },
+  rowInputs: { flexDirection: 'row' },
 });

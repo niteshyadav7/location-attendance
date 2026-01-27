@@ -10,7 +10,7 @@ class AdminNotificationListener {
   /**
    * Start listening for new notifications (for admin users only)
    */
-  startListening(userId: string): void {
+  startListening(userId: string, organizationId: string): void {
     if (this.isListening) {
       console.log('Already listening for notifications');
       return;
@@ -23,6 +23,7 @@ class AdminNotificationListener {
     
     const q = query(
       collection(db, 'notifications'),
+      where('organizationId', '==', organizationId), // Filter by Org
       where('timestamp', '>', this.lastNotificationTime),
       orderBy('timestamp', 'desc'),
       limit(50)

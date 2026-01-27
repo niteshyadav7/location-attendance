@@ -1,17 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, ScrollView, TextInput } from 'react-native';
-import { getFirestore, collection, onSnapshot, doc, updateDoc, query, where, setDoc } from '@react-native-firebase/firestore';
-import { getAuth, createUserWithEmailAndPassword } from '@react-native-firebase/auth';
-import { UserProfile, LocationConfig } from '../types';
+import React, { useState } from 'react';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, ScrollView, TextInput, Platform } from 'react-native';
+import { UserProfile } from '../types';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { useUsers, useUserCreation } from '../hooks/useUserManagement';
+import { useLocations } from '../hooks/useLocations';
+import { COLORS } from '../constants/theme';
+import { useAds } from '../hooks/useAds';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 export const ManageUsersScreen = () => {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [locations, setLocations] = useState<LocationConfig[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Hooks
+  const { users, loading, updateUserStatus, toggleUserActive, deleteUser, assignLocation } = useUsers();
+  const { locations } = useLocations();
+  const { createUser, creating } = useUserCreation();
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('adminUsers');
+
+  // Local State
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   
+  // Assign Location Modal Time States
+  const [assignCheckInTime, setAssignCheckInTime] = useState('');
+  const [assignCheckOutTime, setAssignCheckOutTime] = useState('');
+  const [tempSelectedLocationId, setTempSelectedLocationId] = useState('');
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [timePickerMode, setTimePickerMode] = useState<'checkIn' | 'checkOut'>('checkIn');
+
   // Add User Modal States
   const [addUserModalVisible, setAddUserModalVisible] = useState(false);
   const [newUserName, setNewUserName] = useState('');
@@ -19,54 +35,47 @@ export const ManageUsersScreen = () => {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserLocationId, setNewUserLocationId] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    const db = getFirestore();
+  // Time Picker Handlers
+  const onTimeChange = (event: any, selectedDate?: Date) => {
+    setShowTimePicker(Platform.OS === 'ios');
     
-    // Fetch all users with role 'user'
-    const usersUnsubscribe = onSnapshot(
-      query(collection(db, 'users'), where('role', '==', 'user')),
-      (snapshot) => {
-        const usersList: UserProfile[] = [];
-        snapshot.forEach((doc: any) => {
-          usersList.push({ ...doc.data(), uid: doc.id } as UserProfile);
-        });
-        
-        // Sort: Pending first, then alphabetical
-        usersList.sort((a, b) => {
-            if (a.status === 'pending' && b.status !== 'pending') return -1;
-            if (a.status !== 'pending' && b.status === 'pending') return 1;
-            return a.name.localeCompare(b.name);
-        });
-        
-        setUsers(usersList);
-        setLoading(false);
-      }
-    );
+    // Only update if the user actually selected a date (clicked "OK" or "Set")
+    // On Android, event.type will be 'set' or 'dismissed'
+    if (event.type === 'set' || Platform.OS === 'ios') {
+        if (selectedDate) {
+            // Format as HH:mm
+            const hours = selectedDate.getHours().toString().padStart(2, '0');
+            const minutes = selectedDate.getMinutes().toString().padStart(2, '0');
+            const timeStr = `${hours}:${minutes}`;
+            
+            if (timePickerMode === 'checkIn') {
+                setAssignCheckInTime(timeStr);
+            } else {
+                setAssignCheckOutTime(timeStr);
+            }
+        }
+    }
+  };
 
-    // Fetch all locations
-    const locationsUnsubscribe = onSnapshot(collection(db, 'locations'), (snapshot) => {
-      const locationsList: LocationConfig[] = [];
-      snapshot.forEach((doc: any) => {
-        locationsList.push({ id: doc.id, ...doc.data() } as LocationConfig);
-      });
-      setLocations(locationsList);
-    });
+  const setPlatformShowTimePicker = (show: boolean, mode: 'checkIn' | 'checkOut') => {
+      setTimePickerMode(mode);
+      setShowTimePicker(show);
+  };
 
-    return () => {
-      usersUnsubscribe();
-      locationsUnsubscribe();
-    };
-  }, []);
+  const formatTimeDisplay = (time24: string) => {
+      if (!time24) return 'Select Time';
+      const [h, m] = time24.split(':').map(Number);
+      const period = h >= 12 ? 'PM' : 'AM';
+      const hour12 = h % 12 || 12;
+      return `${hour12}:${m.toString().padStart(2, '0')} ${period}`;
+  };
 
+  // Handlers
   const handleAssignLocation = async (userId: string, locationId: string) => {
     try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'users', userId), {
-        assignedLocationId: locationId
-      });
-      Alert.alert('Success', 'Location assigned successfully!');
+      await assignLocation(userId, locationId, assignCheckInTime, assignCheckOutTime);
+      Alert.alert('Success', 'Location and schedule assigned successfully!');
       setModalVisible(false);
     } catch (error: any) {
       Alert.alert('Error', error.message);
@@ -75,10 +84,7 @@ export const ManageUsersScreen = () => {
 
   const handleUpdateStatus = async (userId: string, newStatus: 'approved' | 'rejected') => {
     try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'users', userId), {
-        status: newStatus
-      });
+      await updateUserStatus(userId, newStatus);
       Alert.alert('Success', `User ${newStatus} successfully`);
     } catch (error: any) {
       Alert.alert('Error', error.message);
@@ -87,47 +93,20 @@ export const ManageUsersScreen = () => {
 
   const openLocationPicker = (user: UserProfile) => {
     setSelectedUser(user);
+    setTempSelectedLocationId(user.assignedLocationId || '');
+    setAssignCheckInTime(user.assignedCheckInTime || '');
+    setAssignCheckOutTime(user.assignedCheckOutTime || '');
     setModalVisible(true);
   };
 
   const handleCreateUser = async () => {
-    // Validation
-    if (!newUserName.trim()) {
-      Alert.alert('Error', 'Please enter user name');
-      return;
-    }
-    if (!newUserEmail.trim()) {
-      Alert.alert('Error', 'Please enter email address');
-      return;
-    }
-    if (!newUserPassword || newUserPassword.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
+    if (!newUserName.trim()) { Alert.alert('Error', 'Please enter user name'); return; }
+    if (!newUserEmail.trim()) { Alert.alert('Error', 'Please enter email address'); return; }
+    if (!newUserPassword || newUserPassword.length < 6) { Alert.alert('Error', 'Password must be at least 6 characters'); return; }
 
-    setCreating(true);
     try {
-      const auth = getAuth();
-      const db = getFirestore();
+      await createUser(newUserName, newUserEmail, newUserPassword, newUserLocationId);
       
-      // Create Firebase Auth user
-      const userCredential = await createUserWithEmailAndPassword(auth, newUserEmail.trim(), newUserPassword);
-      const uid = userCredential.user.uid;
-      
-      // Create user profile in Firestore
-      const newUser: UserProfile = {
-        uid,
-        name: newUserName.trim(),
-        email: newUserEmail.trim(),
-        role: 'user',
-        status: 'approved', // Admin created users are auto-approved
-        assignedLocationId: newUserLocationId || undefined,
-        isActive: true, // New users are active by default
-      };
-      
-      await setDoc(doc(db, 'users', uid), newUser);
-      
-      // Reset form
       setNewUserName('');
       setNewUserEmail('');
       setNewUserPassword('');
@@ -137,29 +116,22 @@ export const ManageUsersScreen = () => {
       Alert.alert('Success', `User ${newUserName} created successfully!`);
     } catch (error: any) {
       let errorMessage = error.message;
-      
-      // Handle common Firebase errors
-      if (error.code === 'auth/email-already-in-use') {
-        errorMessage = 'This email is already registered';
-      } else if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Invalid email address';
-      } else if (error.code === 'auth/weak-password') {
-        errorMessage = 'Password is too weak';
-      }
+      if (error.code === 'auth/email-already-in-use') errorMessage = 'This email is already registered';
+      else if (error.code === 'auth/invalid-email') errorMessage = 'Invalid email address';
+      else if (error.code === 'auth/weak-password') errorMessage = 'Password is too weak';
       
       Alert.alert('Error', errorMessage);
-    } finally {
-      setCreating(false);
     }
   };
 
   const handleToggleUserActive = async (userId: string, currentStatus: boolean | undefined) => {
-    const newStatus = !currentStatus; // If undefined, treat as true (active), so toggle to false
-    const action = newStatus ? 'activate' : 'deactivate';
+    const isActive = currentStatus !== false; 
+    // If active, we are deactivating
+    const action = !isActive ? 'activate' : 'deactivate';
     
     Alert.alert(
       `${action === 'activate' ? 'Activate' : 'Deactivate'} User`,
-      `Are you sure you want to ${action} this user? ${action === 'deactivate' ? 'They will not be able to log in.' : 'They will be able to log in again.'}`,
+      `Are you sure you want to ${action} this user?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -167,10 +139,7 @@ export const ManageUsersScreen = () => {
           style: action === 'deactivate' ? 'destructive' : 'default',
           onPress: async () => {
             try {
-              const db = getFirestore();
-              await updateDoc(doc(db, 'users', userId), {
-                isActive: newStatus
-              });
+              await toggleUserActive(userId, currentStatus);
               Alert.alert('Success', `User ${action}d successfully`);
             } catch (error: any) {
               Alert.alert('Error', error.message);
@@ -192,20 +161,7 @@ export const ManageUsersScreen = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              const db = getFirestore();
-              const auth = getAuth();
-              
-              // Delete user document from Firestore
-              await updateDoc(doc(db, 'users', userId), {
-                isActive: false,
-                status: 'rejected',
-                deletedAt: Date.now()
-              });
-              
-              // Note: We can't delete the Firebase Auth user from here
-              // as we don't have admin privileges. The user document is marked as deleted.
-              // You would need Firebase Admin SDK on a backend to fully delete the auth user.
-              
+              await deleteUser(userId);
               Alert.alert('Success', `User ${userName} has been deleted`);
             } catch (error: any) {
               Alert.alert('Error', error.message);
@@ -222,18 +178,23 @@ export const ManageUsersScreen = () => {
         <View style={styles.headerRow}>
             <Text style={styles.userName}>{item.name}</Text>
             {item.status === 'pending' && (
-                <View style={styles.pendingBadge}>
-                    <Text style={styles.pendingText}>Pending Approval</Text>
+                <View style={[styles.badge, { backgroundColor: COLORS.status.onBreak + '20' }]}>
+                    <Text style={[styles.badgeText, { color: COLORS.status.onBreak }]}>Pending Approval</Text>
                 </View>
             )}
             {item.status === 'rejected' && (
-                <View style={[styles.pendingBadge, { backgroundColor: '#ffebee' }]}>
-                    <Text style={[styles.pendingText, { color: '#ef5350' }]}>Rejected</Text>
+                <View style={[styles.badge, { backgroundColor: COLORS.status.offline + '20' }]}>
+                    <Text style={[styles.badgeText, { color: COLORS.status.offline }]}>Rejected</Text>
+                </View>
+            )}
+            {item.deviceResetRequested && (
+                <View style={[styles.badge, { backgroundColor: '#fef3c7' }]}>
+                    <Text style={[styles.badgeText, { color: '#d97706' }]}>Device Reset</Text>
                 </View>
             )}
             {item.isActive === false && (
-                <View style={[styles.pendingBadge, { backgroundColor: '#fce4ec' }]}>
-                    <Text style={[styles.pendingText, { color: '#e91e63' }]}>Inactive</Text>
+                <View style={[styles.badge, { backgroundColor: '#fce4ec' }]}>
+                    <Text style={[styles.badgeText, { color: '#e91e63' }]}>Inactive</Text>
                 </View>
             )}
         </View>
@@ -252,14 +213,14 @@ export const ManageUsersScreen = () => {
                     style={[styles.actionButton, styles.approveButton]}
                     onPress={() => handleUpdateStatus(item.uid, 'approved')}
                 >
-                    <Icon name="checkmark-circle-outline" size={20} color="#fff" />
+                    <Icon name="checkmark-circle-outline" size={20} color={COLORS.white} />
                     <Text style={styles.actionButtonText}>Approve</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                     style={[styles.actionButton, styles.rejectButton]}
                     onPress={() => handleUpdateStatus(item.uid, 'rejected')}
                 >
-                    <Icon name="close-circle-outline" size={20} color="#fff" />
+                    <Icon name="close-circle-outline" size={20} color={COLORS.white} />
                     <Text style={styles.actionButtonText}>Reject</Text>
                 </TouchableOpacity>
             </View>
@@ -274,7 +235,6 @@ export const ManageUsersScreen = () => {
             </Text>
           </TouchableOpacity>
 
-          {/* Deactivate/Activate and Delete Buttons */}
           <View style={styles.dangerButtonsRow}>
             <TouchableOpacity 
               style={[styles.actionButton, item.isActive === false ? styles.activateButton : styles.deactivateButton]}
@@ -283,7 +243,7 @@ export const ManageUsersScreen = () => {
               <Icon 
                 name={item.isActive === false ? "checkmark-done-outline" : "ban-outline"} 
                 size={18} 
-                color="#fff" 
+                color={COLORS.white} 
               />
               <Text style={styles.actionButtonText}>
                 {item.isActive === false ? 'Activate' : 'Deactivate'}
@@ -294,7 +254,7 @@ export const ManageUsersScreen = () => {
               style={[styles.actionButton, styles.deleteButton]}
               onPress={() => handleDeleteUser(item.uid, item.name)}
             >
-              <Icon name="trash-outline" size={18} color="#fff" />
+              <Icon name="trash-outline" size={18} color={COLORS.white} />
               <Text style={styles.actionButtonText}>Delete</Text>
             </TouchableOpacity>
           </View>
@@ -305,13 +265,24 @@ export const ManageUsersScreen = () => {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#667eea" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
       <FlatList
         data={users}
         renderItem={renderItem}
@@ -325,7 +296,7 @@ export const ManageUsersScreen = () => {
         style={styles.fab}
         onPress={() => setAddUserModalVisible(true)}
       >
-        <Icon name="person-add" size={28} color="#fff" />
+        <Icon name="person-add" size={28} color={COLORS.white} />
       </TouchableOpacity>
 
       {/* Add User Modal */}
@@ -340,22 +311,20 @@ export const ManageUsersScreen = () => {
             <Text style={styles.modalTitle}>Add New User</Text>
             
             <ScrollView style={styles.formContainer}>
-              {/* Name Input */}
               <View style={styles.inputContainer}>
-                <Icon name="person-outline" size={20} color="#667eea" style={styles.inputIcon} />
+                <Icon name="person-outline" size={20} color={COLORS.primary} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Full Name"
                   value={newUserName}
                   onChangeText={setNewUserName}
                   autoCapitalize="words"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={COLORS.text.light}
                 />
               </View>
 
-              {/* Email Input */}
               <View style={styles.inputContainer}>
-                <Icon name="mail-outline" size={20} color="#667eea" style={styles.inputIcon} />
+                <Icon name="mail-outline" size={20} color={COLORS.primary} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Email Address"
@@ -363,41 +332,29 @@ export const ManageUsersScreen = () => {
                   onChangeText={setNewUserEmail}
                   autoCapitalize="none"
                   keyboardType="email-address"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={COLORS.text.light}
                 />
               </View>
 
-              {/* Password Input */}
               <View style={styles.inputContainer}>
-                <Icon name="lock-closed-outline" size={20} color="#667eea" style={styles.inputIcon} />
+                <Icon name="lock-closed-outline" size={20} color={COLORS.primary} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Password (min 6 characters)"
                   value={newUserPassword}
                   onChangeText={setNewUserPassword}
                   secureTextEntry={!showPassword}
-                  placeholderTextColor="#999"
+                  placeholderTextColor={COLORS.text.light}
                 />
-                <TouchableOpacity
-                  onPress={() => setShowPassword(!showPassword)}
-                  style={styles.eyeIcon}
-                >
-                  <Icon
-                    name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                    size={20}
-                    color="#999"
-                  />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
+                  <Icon name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color={COLORS.text.light} />
                 </TouchableOpacity>
               </View>
 
-              {/* Location Selection */}
               <Text style={styles.sectionLabel}>Assign Location (Optional)</Text>
               <ScrollView style={styles.locationPickerContainer}>
                 <TouchableOpacity
-                  style={[
-                    styles.locationPickerItem,
-                    !newUserLocationId && styles.selectedLocationPickerItem
-                  ]}
+                  style={[styles.locationPickerItem, !newUserLocationId && styles.selectedLocationPickerItem]}
                   onPress={() => setNewUserLocationId('')}
                 >
                   <Text style={styles.locationPickerText}>No Location</Text>
@@ -405,10 +362,7 @@ export const ManageUsersScreen = () => {
                 {locations.map((location) => (
                   <TouchableOpacity
                     key={location.id}
-                    style={[
-                      styles.locationPickerItem,
-                      newUserLocationId === location.id && styles.selectedLocationPickerItem
-                    ]}
+                    style={[styles.locationPickerItem, newUserLocationId === location.id && styles.selectedLocationPickerItem]}
                     onPress={() => setNewUserLocationId(location.id)}
                   >
                     <Text style={styles.locationPickerText}>{location.name}</Text>
@@ -418,16 +372,12 @@ export const ManageUsersScreen = () => {
               </ScrollView>
             </ScrollView>
 
-            {/* Action Buttons */}
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
                   setAddUserModalVisible(false);
-                  setNewUserName('');
-                  setNewUserEmail('');
-                  setNewUserPassword('');
-                  setNewUserLocationId('');
+                  setNewUserName(''); setNewUserEmail(''); setNewUserPassword(''); setNewUserLocationId('');
                 }}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -438,18 +388,14 @@ export const ManageUsersScreen = () => {
                 onPress={handleCreateUser}
                 disabled={creating}
               >
-                {creating ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.createButtonText}>Create User</Text>
-                )}
+                {creating ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.createButtonText}>Create User</Text>}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Assign Location Modal (existing) */}
+      {/* Assign Location Modal */}
       <Modal
         visible={modalVisible}
         transparent={true}
@@ -458,79 +404,112 @@ export const ManageUsersScreen = () => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Location for {selectedUser?.name}</Text>
+            <Text style={styles.modalTitle}>Assign Location & Schedule</Text>
+            
+            <View style={{ marginBottom: 15 }}>
+                  <Text style={styles.sectionLabel}>Select Shift Schedule (Optional)</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginBottom: 5 }}>Check-In Time</Text>
+                          <TouchableOpacity 
+                            style={styles.timeInput}
+                            onPress={() => setPlatformShowTimePicker(true, 'checkIn')}
+                          >
+                              <Text style={{ color: assignCheckInTime ? COLORS.text.primary : COLORS.text.light }}>
+                                {formatTimeDisplay(assignCheckInTime)}
+                              </Text>
+                              <Icon name="time-outline" size={18} color={COLORS.primary} />
+                          </TouchableOpacity>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 12, color: COLORS.text.secondary, marginBottom: 5 }}>Check-Out Time</Text>
+                          <TouchableOpacity 
+                            style={styles.timeInput}
+                            onPress={() => setPlatformShowTimePicker(true, 'checkOut')}
+                          >
+                              <Text style={{ color: assignCheckOutTime ? COLORS.text.primary : COLORS.text.light }}>
+                                {formatTimeDisplay(assignCheckOutTime)}
+                              </Text>
+                              <Icon name="time-outline" size={18} color={COLORS.primary} />
+                          </TouchableOpacity>
+                      </View>
+                  </View>
+                  {(assignCheckInTime || assignCheckOutTime) && (
+                      <TouchableOpacity onPress={() => { setAssignCheckInTime(''); setAssignCheckOutTime(''); }} style={{ alignItems: 'flex-end', marginTop: 5 }}>
+                          <Text style={{ fontSize: 12, color: COLORS.status.offline }}>Clear Schedule</Text>
+                      </TouchableOpacity>
+                  )}
+            </View>
+
+            <Text style={styles.sectionLabel}>Select Location</Text>
             <ScrollView style={styles.locationList}>
               {locations.map((location) => (
                 <TouchableOpacity
                   key={location.id}
-                  style={[
-                    styles.locationItem,
-                    selectedUser?.assignedLocationId === location.id && styles.selectedLocationItem
-                  ]}
-                  onPress={() => selectedUser && handleAssignLocation(selectedUser.uid, location.id)}
+                  style={[styles.locationItem, tempSelectedLocationId === location.id && styles.selectedLocationItem]}
+                  onPress={() => setTempSelectedLocationId(location.id)}
                 >
                   <Text style={styles.locationName}>{location.name}</Text>
                   <Text style={styles.locationDetails}>Radius: {location.radius}m</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setModalVisible(false)}
-            >
-              <Text style={styles.closeButtonText}>Cancel</Text>
-            </TouchableOpacity>
+
+            <View style={styles.modalActions}>
+                <TouchableOpacity 
+                    style={[styles.modalButton, styles.cancelButton]} 
+                    onPress={() => setModalVisible(false)}
+                >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                    style={[styles.modalButton, styles.createButton]} 
+                    onPress={() => selectedUser && handleAssignLocation(selectedUser.uid, tempSelectedLocationId)}
+                >
+                    <Text style={styles.createButtonText}>Save Changes</Text>
+                </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
+
+      {showTimePicker && (
+        <DateTimePicker
+          testID="dateTimePicker"
+          value={new Date()}
+          mode="time"
+          is24Hour={false}
+          display="spinner"
+          onChange={onTimeChange}
+        />
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: COLORS.background },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   list: { padding: 20 },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     padding: 15,
     borderRadius: 10,
     marginBottom: 15,
     elevation: 2,
   },
-  userInfo: {
-    marginBottom: 15,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  userName: { fontSize: 18, fontWeight: 'bold', color: '#333', flex: 1 },
-  pendingBadge: {
-    backgroundColor: '#fff3e0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginLeft: 8,
-  },
-  pendingText: {
-    color: '#ff9800',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  userEmail: { fontSize: 14, color: '#666', marginTop: 2 },
-  assignedText: { fontSize: 12, color: '#999', marginTop: 4 },
-  statusText: { fontSize: 12, color: '#666', marginTop: 2, fontStyle: 'italic' },
+  userInfo: { marginBottom: 15 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  userName: { fontSize: 18, fontWeight: 'bold', color: COLORS.text.primary, flex: 1 },
+  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginLeft: 8 },
+  badgeText: { fontSize: 12, fontWeight: 'bold' },
   
-  actionButtonsContainer: {
-    gap: 10,
-  },
-  approvalButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
+  userEmail: { fontSize: 14, color: COLORS.text.secondary, marginTop: 2 },
+  assignedText: { fontSize: 12, color: COLORS.text.light, marginTop: 4 },
+  
+  actionButtonsContainer: { gap: 10 },
+  approvalButtons: { flexDirection: 'row', gap: 10 },
   actionButton: {
     flex: 1,
     flexDirection: 'row',
@@ -540,20 +519,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
   },
-  approveButton: {
-    backgroundColor: '#4caf50',
-  },
-  rejectButton: {
-    backgroundColor: '#ef5350',
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
+  approveButton: { backgroundColor: COLORS.status.working },
+  rejectButton: { backgroundColor: COLORS.status.offline },
+  actionButtonText: { color: COLORS.white, fontSize: 14, fontWeight: 'bold' },
   
   assignButton: {
-    backgroundColor: '#667eea',
+    backgroundColor: COLORS.primary,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -561,35 +532,18 @@ const styles = StyleSheet.create({
   assignButtonSecondary: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#667eea',
+    borderColor: COLORS.primary,
   },
-  assignButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  assignButtonTextSecondary: {
-    color: '#667eea',
-  },
+  assignButtonText: { color: COLORS.white, fontSize: 14, fontWeight: 'bold' },
+  assignButtonTextSecondary: { color: COLORS.primary },
   
-  // Danger Buttons (Deactivate/Activate and Delete)
-  dangerButtonsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  deactivateButton: {
-    backgroundColor: '#ff9800',
-  },
-  activateButton: {
-    backgroundColor: '#4caf50',
-  },
-  deleteButton: {
-    backgroundColor: '#f44336',
-  },
+  dangerButtonsRow: { flexDirection: 'row', gap: 10 },
+  deactivateButton: { backgroundColor: COLORS.status.onBreak },
+  activateButton: { backgroundColor: COLORS.status.working },
+  deleteButton: { backgroundColor: COLORS.status.offline },
   
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888' },
+  emptyText: { textAlign: 'center', marginTop: 50, color: COLORS.text.secondary },
   
-  // Floating Action Button
   fab: {
     position: 'absolute',
     bottom: 20,
@@ -597,17 +551,12 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#667eea',
+    backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
   },
   
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -615,7 +564,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 15,
     padding: 20,
     width: '90%',
@@ -626,137 +575,65 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
     textAlign: 'center',
-    color: '#333',
+    color: COLORS.text.primary,
   },
   
-  // Form Styles
-  formContainer: {
-    maxHeight: 400,
-  },
+  formContainer: { maxHeight: 400 },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: COLORS.background,
     borderRadius: 10,
     marginBottom: 15,
     paddingHorizontal: 15,
     borderWidth: 1,
     borderColor: '#e9ecef',
   },
-  inputIcon: {
-    marginRight: 10,
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#333',
-  },
-  eyeIcon: {
-    padding: 5,
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-    marginTop: 5,
-  },
+  inputIcon: { marginRight: 10 },
+  input: { flex: 1, paddingVertical: 14, fontSize: 16, color: COLORS.text.primary },
+  eyeIcon: { padding: 5 },
+  sectionLabel: { fontSize: 14, fontWeight: 'bold', color: COLORS.text.primary, marginBottom: 10, marginTop: 5 },
   
-  // Location Picker Styles
-  locationPickerContainer: {
-    maxHeight: 150,
-    marginBottom: 15,
-  },
+  locationPickerContainer: { maxHeight: 150, marginBottom: 15 },
   locationPickerItem: {
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#ddd',
     marginBottom: 8,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
   },
   selectedLocationPickerItem: {
-    backgroundColor: '#e8f5e9',
-    borderColor: '#667eea',
+    backgroundColor: COLORS.primary + '10',
+    borderColor: COLORS.primary,
     borderWidth: 2,
   },
-  locationPickerText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-  },
-  locationPickerDetails: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 3,
-  },
+  locationPickerText: { fontSize: 15, fontWeight: '600', color: COLORS.text.primary },
+  locationPickerDetails: { fontSize: 12, color: COLORS.text.secondary, marginTop: 3 },
   
-  // Modal Actions
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-    gap: 10,
-  },
-  modalButton: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#e9ecef',
-  },
-  cancelButtonText: {
-    color: '#666',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  createButton: {
-    backgroundColor: '#667eea',
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  modalActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20, gap: 10 },
+  modalButton: { flex: 1, padding: 14, borderRadius: 10, alignItems: 'center' },
+  cancelButton: { backgroundColor: '#e9ecef' },
+  cancelButtonText: { color: COLORS.text.secondary, fontSize: 16, fontWeight: 'bold' },
+  createButton: { backgroundColor: COLORS.primary },
+  createButtonText: { color: COLORS.white, fontSize: 16, fontWeight: 'bold' },
   
-  // Existing Location Assignment Modal Styles
-  locationList: {
-    maxHeight: 300,
-  },
-  locationItem: {
-    padding: 15,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginBottom: 10,
-  },
-  selectedLocationItem: {
-    backgroundColor: '#e8f5e9',
-    borderColor: '#10b981',
-  },
-  locationName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  locationDetails: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-  },
-  closeButton: {
-    backgroundColor: '#999',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 15,
-  },
-  closeButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  locationList: { maxHeight: 300 },
+  locationItem: { padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', marginBottom: 10 },
+  selectedLocationItem: { backgroundColor: COLORS.primary + '10', borderColor: COLORS.status.working },
+  locationName: { fontSize: 16, fontWeight: 'bold', color: COLORS.text.primary },
+  locationDetails: { fontSize: 12, color: COLORS.text.secondary, marginTop: 4 },
+  closeButton: { backgroundColor: COLORS.text.light, padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 15 },
+  closeButtonText: { color: COLORS.white, fontSize: 16, fontWeight: 'bold' },
+  
+  timeInput: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#e9ecef',
+      backgroundColor: COLORS.background
+  }
 });

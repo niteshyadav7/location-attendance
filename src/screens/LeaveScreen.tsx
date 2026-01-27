@@ -1,124 +1,110 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { getFirestore, collection, query, where, addDoc, onSnapshot } from '@react-native-firebase/firestore';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, ScrollView, Linking } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+import { useAds } from '../hooks/useAds';
 import { useAuthStore } from '../store/useAuthStore';
 import { LeaveRequest, Notice } from '../types';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { format } from 'date-fns';
+import { COLORS } from '../constants/theme';
+import { useLeaves, useNotices } from '../hooks/useLeaves';
+
+
+
+import DatePicker from 'react-native-date-picker';
 
 export const LeaveScreen = () => {
   const user = useAuthStore((state) => state.user);
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('leaves');
   const [activeTab, setActiveTab] = useState<'leaves' | 'notices'>('leaves');
   
-  // Leaves State
-  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
-  const [loadingLeaves, setLoadingLeaves] = useState(true);
+  // Custom Hooks
+  const { leaves, loading: loadingLeaves, submitLeaveRequest, deleteLeave, updateLeave } = useLeaves(user);
+  const { notices, loading: loadingNotices } = useNotices();
+
+  // Local State
   const [modalVisible, setModalVisible] = useState(false);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(new Date());
+  const [endDate, setEndDate] = useState(new Date());
+  const [openStart, setOpenStart] = useState(false);
+  const [openEnd, setOpenEnd] = useState(false);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  // Notices State
-  const [notices, setNotices] = useState<Notice[]>([]);
-  const [loadingNotices, setLoadingNotices] = useState(true);
+  const [editingLeaveId, setEditingLeaveId] = useState<string | null>(null);
+  
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
   const [noticeModalVisible, setNoticeModalVisible] = useState(false);
-
-  // Fetch Leaves
-  useEffect(() => {
-    if (!user) return;
-    const db = getFirestore();
-    const q = query(
-      collection(db, 'leaves'), 
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LeaveRequest));
-      data.sort((a: LeaveRequest, b: LeaveRequest) => b.requestDate - a.requestDate);
-      setLeaves(data);
-      setLoadingLeaves(false);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // Fetch Notices
-  useEffect(() => {
-    const db = getFirestore();
-    const q = query(
-      collection(db, 'notices'),
-      where('isActive', '==', true)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const noticeList: Notice[] = [];
-      snapshot.forEach((doc: any) => {
-        const notice = { id: doc.id, ...doc.data() } as Notice;
-        if (!notice.expiresAt || notice.expiresAt > Date.now()) {
-          noticeList.push(notice);
-        }
-      });
-      noticeList.sort((a, b) => b.createdAt - a.createdAt);
-      setNotices(noticeList);
-      setLoadingNotices(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   const handleRequest = async () => {
     if (!startDate || !endDate || !reason) {
       Alert.alert('Error', 'Please fill all fields');
       return;
     }
-    
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-      Alert.alert('Error', 'Date must be in YYYY-MM-DD format');
-      return;
-    }
 
     setSubmitting(true);
     try {
-      const db = getFirestore();
-      await addDoc(collection(db, 'leaves'), {
-        userId: user?.uid,
-        userName: user?.name,
-        startDate,
-        endDate,
-        reason,
-        status: 'PENDING',
-        requestDate: Date.now(),
-      });
-      setModalVisible(false);
-      setStartDate('');
-      setEndDate('');
-      setReason('');
-      Alert.alert('Success', 'Leave request submitted');
+        if (editingLeaveId) {
+            await updateLeave(
+                editingLeaveId,
+                format(startDate, 'yyyy-MM-dd'), 
+                format(endDate, 'yyyy-MM-dd'), 
+                reason
+            );
+            Alert.alert('Success', 'Leave request updated');
+        } else {
+            await submitLeaveRequest(
+              format(startDate, 'yyyy-MM-dd'), 
+              format(endDate, 'yyyy-MM-dd'), 
+              reason
+            );
+            Alert.alert('Success', 'Leave request submitted');
+        }
+        
+        closeModal();
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+        Alert.alert('Error', error.message);
     } finally {
-      setSubmitting(false);
+        setSubmitting(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'APPROVED': return '#4CD964';
-      case 'REJECTED': return '#FF3B30';
-      default: return '#F5A623';
-    }
+  const closeModal = () => {
+      setModalVisible(false);
+      setEditingLeaveId(null);
+      setStartDate(new Date());
+      setEndDate(new Date());
+      setReason('');
   };
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return '#FF3B30';
-      case 'high': return '#FF9500';
-      case 'normal': return '#007AFF';
-      default: return '#8E8E93';
-    }
+  const handleEdit = (item: LeaveRequest) => {
+      setEditingLeaveId(item.id);
+      setStartDate(new Date(item.startDate));
+      setEndDate(new Date(item.endDate));
+      setReason(item.reason);
+      setModalVisible(true);
+  };
+
+  const handleDelete = (id: string) => {
+      Alert.alert(
+          'Delete Request',
+          'Are you sure you want to delete this leave request?',
+          [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                  text: 'Delete', 
+                  style: 'destructive', 
+                  onPress: async () => {
+                      try {
+                          await deleteLeave(id);
+                      } catch (error: any) {
+                          Alert.alert('Error', 'Failed to delete request');
+                      }
+                  }
+              }
+          ]
+      );
   };
 
   const getPriorityIcon = (priority: string) => {
@@ -130,16 +116,43 @@ export const LeaveScreen = () => {
     }
   };
 
+  const handleOpenAppUrl = async (url: string) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Cannot open this URL');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open the app link');
+    }
+  };
+
   const renderLeaveItem = ({ item }: { item: LeaveRequest }) => (
     <View style={styles.card}>
       <View style={styles.row}>
         <Text style={styles.date}>{item.startDate} to {item.endDate}</Text>
-        <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) }]}>
+        <View style={[styles.badge, { backgroundColor: COLORS.leaveStatus[item.status as keyof typeof COLORS.leaveStatus] || COLORS.leaveStatus.PENDING }]}>
           <Text style={styles.badgeText}>{item.status}</Text>
         </View>
       </View>
       <Text style={styles.reason}>{item.reason}</Text>
-      <Text style={styles.timestamp}>Requested on {format(item.requestDate, 'PP')}</Text>
+      
+      <View style={styles.footerRow}>
+          <Text style={styles.timestamp}>Requested on {format(item.requestDate, 'PP')}</Text>
+          
+          {item.status === 'PENDING' && (
+              <View style={styles.actionIcons}>
+                  <TouchableOpacity onPress={() => handleEdit(item)} style={styles.iconBtn}>
+                      <Ionicons name="pencil" size={18} color={COLORS.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(item.id)} style={[styles.iconBtn, { backgroundColor: '#FEE2E2' }]}>
+                      <Ionicons name="trash" size={18} color={COLORS.status.offline} />
+                  </TouchableOpacity>
+              </View>
+          )}
+      </View>
     </View>
   );
 
@@ -156,25 +169,42 @@ export const LeaveScreen = () => {
           <Ionicons 
             name={getPriorityIcon(item.priority)} 
             size={24} 
-            color={getPriorityColor(item.priority)} 
+            color={COLORS.priority[item.priority as keyof typeof COLORS.priority] || COLORS.priority.normal} 
           />
         </View>
         <View style={styles.noticeContent}>
           <Text style={styles.noticeTitle} numberOfLines={2}>{item.title}</Text>
           <Text style={styles.noticeDate}>{format(item.createdAt, 'PPp')}</Text>
         </View>
-        <View style={[styles.priorityBadge, { backgroundColor: getPriorityColor(item.priority) }]}>
+        <View style={[styles.priorityBadge, { backgroundColor: COLORS.priority[item.priority as keyof typeof COLORS.priority] || COLORS.priority.normal }]}>
           <Text style={styles.priorityText}>{item.priority.toUpperCase()}</Text>
         </View>
       </View>
       {item.message && (
         <Text style={styles.noticePreview} numberOfLines={2}>{item.message}</Text>
       )}
+      {item.appUrl && (
+        <View style={styles.appUpdateBadge}>
+          <Ionicons name="logo-google-playstore" size={14} color="#10B981" />
+          <Text style={styles.appUpdateText}>App Update Available</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
       {/* Tab Bar */}
       <View style={styles.tabBar}>
         <TouchableOpacity 
@@ -184,7 +214,7 @@ export const LeaveScreen = () => {
           <Ionicons 
             name="calendar" 
             size={20} 
-            color={activeTab === 'leaves' ? '#007AFF' : '#8E8E93'} 
+            color={activeTab === 'leaves' ? COLORS.primary : COLORS.text.secondary} 
           />
           <Text style={[styles.tabText, activeTab === 'leaves' && styles.activeTabText]}>
             My Leaves
@@ -198,7 +228,7 @@ export const LeaveScreen = () => {
           <Ionicons 
             name="megaphone" 
             size={20} 
-            color={activeTab === 'notices' ? '#007AFF' : '#8E8E93'} 
+            color={activeTab === 'notices' ? COLORS.primary : COLORS.text.secondary} 
           />
           <Text style={[styles.tabText, activeTab === 'notices' && styles.activeTabText]}>
             Notice Board
@@ -215,7 +245,7 @@ export const LeaveScreen = () => {
       {activeTab === 'leaves' ? (
         <>
           {loadingLeaves ? (
-            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
           ) : (
             <FlatList
               data={leaves}
@@ -227,13 +257,13 @@ export const LeaveScreen = () => {
           )}
 
           <TouchableOpacity style={styles.fab} onPress={() => setModalVisible(true)}>
-            <Ionicons name="add" size={30} color="#fff" />
+            <Ionicons name="add" size={30} color={COLORS.white} />
           </TouchableOpacity>
         </>
       ) : (
         <>
           {loadingNotices ? (
-            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
           ) : (
             <FlatList
               data={notices}
@@ -247,46 +277,110 @@ export const LeaveScreen = () => {
       )}
 
       {/* Leave Request Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
+      <Modal visible={modalVisible} animationType="fade" transparent onRequestClose={closeModal}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Request Leave</Text>
-            
-            <Text style={styles.label}>Start Date (YYYY-MM-DD)</Text>
-            <TextInput 
-              style={styles.input} 
-              placeholder="2023-12-01" 
-              value={startDate} 
-              onChangeText={setStartDate} 
-              keyboardType="numeric"
-            />
-
-            <Text style={styles.label}>End Date (YYYY-MM-DD)</Text>
-            <TextInput 
-              style={styles.input} 
-              placeholder="2023-12-05" 
-              value={endDate} 
-              onChangeText={setEndDate} 
-              keyboardType="numeric"
-            />
-
-            <Text style={styles.label}>Reason</Text>
-            <TextInput 
-              style={[styles.input, { height: 80 }]} 
-              placeholder="Sick leave, Vacation..." 
-              value={reason} 
-              onChangeText={setReason} 
-              multiline
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => setModalVisible(false)}>
-                <Text style={styles.buttonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.button} onPress={handleRequest} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Submit</Text>}
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{editingLeaveId ? 'Edit Leave Request' : 'Request Leave'}</Text>
+              <TouchableOpacity onPress={closeModal} style={styles.closeButton}>
+                <Ionicons name="close-circle" size={28} color={COLORS.text.light} />
               </TouchableOpacity>
             </View>
+
+            <ScrollView contentContainerStyle={styles.formScroll}>
+              
+              {/* Date Selection Row */}
+              <View style={styles.dateRow}>
+                <View style={styles.dateCol}>
+                  <Text style={styles.label}>Start Date</Text>
+                  <TouchableOpacity 
+                    style={styles.dateButton} 
+                    onPress={() => setOpenStart(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+                    <Text style={styles.dateButtonText}>
+                      {format(startDate, 'MMM dd, yyyy')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.dateCol}>
+                  <Text style={styles.label}>End Date</Text>
+                  <TouchableOpacity 
+                    style={styles.dateButton} 
+                    onPress={() => setOpenEnd(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+                    <Text style={styles.dateButtonText}>
+                      {format(endDate, 'MMM dd, yyyy')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <DatePicker
+                modal
+                open={openStart}
+                date={startDate}
+                mode="date"
+                onConfirm={(date) => {
+                  setOpenStart(false)
+                  setStartDate(date)
+                }}
+                onCancel={() => setOpenStart(false)}
+              />
+              <DatePicker
+                modal
+                open={openEnd}
+                date={endDate}
+                mode="date"
+                onConfirm={(date) => {
+                  setOpenEnd(false)
+                  setEndDate(date)
+                }}
+                onCancel={() => setOpenEnd(false)}
+              />
+
+              <Text style={styles.label}>Reason for Leave</Text>
+              <TextInput 
+                style={styles.textArea} 
+                placeholder="Please describe why you need leave..." 
+                placeholderTextColor={COLORS.text.light}
+                value={reason} 
+                onChangeText={setReason} 
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+
+              <View style={styles.actionButtons}>
+                <TouchableOpacity 
+                  style={styles.secondaryBtn} 
+                  onPress={closeModal}
+                >
+                   <Text style={styles.secondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.primaryBtn} 
+                  onPress={handleRequest} 
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color={COLORS.white} size="small" />
+                  ) : (
+                    <>
+                      <Text style={styles.primaryBtnText}>Submit Request</Text>
+                      <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -299,7 +393,7 @@ export const LeaveScreen = () => {
               <Ionicons 
                 name={selectedNotice ? getPriorityIcon(selectedNotice.priority) : 'information-circle'} 
                 size={32} 
-                color={selectedNotice ? getPriorityColor(selectedNotice.priority) : '#007AFF'} 
+                color={selectedNotice ? (COLORS.priority[selectedNotice.priority as keyof typeof COLORS.priority] || COLORS.priority.normal) : COLORS.primary} 
               />
               <TouchableOpacity 
                 style={styles.closeButton}
@@ -312,7 +406,7 @@ export const LeaveScreen = () => {
             <Text style={styles.noticeModalTitle}>{selectedNotice?.title}</Text>
             
             <View style={styles.noticeModalMeta}>
-              <View style={[styles.priorityBadge, { backgroundColor: selectedNotice ? getPriorityColor(selectedNotice.priority) : '#007AFF' }]}>
+              <View style={[styles.priorityBadge, { backgroundColor: selectedNotice ? (COLORS.priority[selectedNotice.priority as keyof typeof COLORS.priority] || COLORS.priority.normal) : COLORS.primary }]}>
                 <Text style={styles.priorityText}>{selectedNotice?.priority.toUpperCase()}</Text>
               </View>
               <Text style={styles.noticeModalDate}>
@@ -324,6 +418,17 @@ export const LeaveScreen = () => {
               <Text style={styles.noticeModalMessage}>{selectedNotice?.message}</Text>
             </ScrollView>
 
+            {selectedNotice?.appUrl && (
+              <TouchableOpacity 
+                style={styles.appStoreButton}
+                onPress={() => handleOpenAppUrl(selectedNotice.appUrl!)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="logo-google-playstore" size={20} color={COLORS.white} />
+                <Text style={styles.appStoreButtonText}>Open in Play Store</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={styles.button}
               onPress={() => setNoticeModalVisible(false)}
@@ -333,17 +438,17 @@ export const LeaveScreen = () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: COLORS.background },
   
   // Tab Bar
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -361,18 +466,18 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomColor: '#007AFF',
+    borderBottomColor: COLORS.primary,
   },
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: COLORS.text.secondary,
   },
   activeTabText: {
-    color: '#007AFF',
+    color: COLORS.primary,
   },
   noticeBadge: {
-    backgroundColor: '#FF3B30',
+    backgroundColor: COLORS.status.offline, // Red for alerts
     borderRadius: 10,
     minWidth: 20,
     height: 20,
@@ -381,18 +486,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   noticeBadgeText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 11,
     fontWeight: 'bold',
   },
 
   // List
   list: { padding: 20 },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888', fontSize: 16 },
+  emptyText: { textAlign: 'center', marginTop: 50, color: COLORS.text.secondary, fontSize: 16 },
 
   // Leave Card
   card: { 
-    backgroundColor: '#fff', 
+    backgroundColor: COLORS.white, 
     padding: 15, 
     borderRadius: 12, 
     marginBottom: 15, 
@@ -403,15 +508,15 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  date: { fontSize: 16, fontWeight: 'bold', color: '#333', flex: 1 },
+  date: { fontSize: 16, fontWeight: 'bold', color: COLORS.text.primary, flex: 1 },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  badgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  reason: { fontSize: 14, color: '#666', marginBottom: 8, lineHeight: 20 },
-  timestamp: { fontSize: 12, color: '#999' },
+  badgeText: { color: COLORS.white, fontSize: 12, fontWeight: 'bold' },
+  reason: { fontSize: 14, color: COLORS.text.secondary, marginBottom: 8, lineHeight: 20 },
+  timestamp: { fontSize: 12, color: COLORS.text.light },
 
   // Notice Card
   noticeCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
@@ -435,12 +540,12 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 4,
   },
   noticeDate: {
     fontSize: 12,
-    color: '#999',
+    color: COLORS.text.light,
   },
   priorityBadge: {
     paddingHorizontal: 8,
@@ -449,15 +554,31 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   priorityText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 10,
     fontWeight: 'bold',
   },
   noticePreview: {
     fontSize: 14,
-    color: '#666',
+    color: COLORS.text.secondary,
     lineHeight: 20,
     marginTop: 4,
+  },
+  appUpdateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    gap: 6,
+  },
+  appUpdateText: {
+    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '600',
   },
 
   // FAB
@@ -465,7 +586,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 20,
     right: 20,
-    backgroundColor: '#007AFF',
+    backgroundColor: COLORS.primary,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -478,59 +599,131 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
 
-  // Modal
+  // Modal Redesign
   modalContainer: { 
     flex: 1, 
     justifyContent: 'center', 
-    backgroundColor: 'rgba(0,0,0,0.5)', 
+    backgroundColor: 'rgba(0,0,0,0.6)', 
     padding: 20 
   },
   modalContent: { 
-    backgroundColor: '#fff', 
-    borderRadius: 15, 
-    padding: 20,
-    maxHeight: '80%',
+    backgroundColor: COLORS.white, 
+    borderRadius: 24, 
+    padding: 24,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    paddingBottom: 16,
   },
   modalTitle: { 
-    fontSize: 20, 
+    fontSize: 22, 
     fontWeight: 'bold', 
-    marginBottom: 20, 
-    textAlign: 'center',
-    color: '#333',
+    color: COLORS.text.primary,
+  },
+  formScroll: {
+    paddingBottom: 20,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 20,
+  },
+  dateCol: {
+    flex: 1,
   },
   label: { 
     fontSize: 14, 
-    color: '#666', 
-    marginBottom: 5,
+    color: COLORS.text.secondary, 
+    marginBottom: 8,
     fontWeight: '600',
+    marginLeft: 4,
   },
-  input: { 
-    borderWidth: 1, 
-    borderColor: '#ddd', 
-    borderRadius: 8, 
-    padding: 12, 
-    marginBottom: 15, 
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: '#F9FAFB',
+  },
+  dateButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text.primary,
+  },
+  textArea: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: '#F9FAFB',
     fontSize: 16,
-    backgroundColor: '#f9f9f9',
+    color: COLORS.text.primary,
+    minHeight: 120,
+    marginBottom: 24,
   },
-  modalButtons: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
+  actionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     marginTop: 10,
-    gap: 10,
   },
+  secondaryBtn: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  secondaryBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.text.secondary,
+  },
+  primaryBtn: {
+    flex: 1.5, // Make primary button larger
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    gap: 8,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryBtnText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: COLORS.white,
+  },
+  // Legacy styles for Notice Modal
   button: { 
-    flex: 1, 
-    backgroundColor: '#007AFF', 
+    backgroundColor: COLORS.primary, 
     padding: 15, 
     borderRadius: 8, 
     alignItems: 'center',
-  },
-  cancelButton: { 
-    backgroundColor: '#FF3B30',
+    width: '100%',
   },
   buttonText: { 
-    color: '#fff', 
+    color: COLORS.white, 
     fontWeight: 'bold',
     fontSize: 16,
   },
@@ -548,7 +741,7 @@ const styles = StyleSheet.create({
   noticeModalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 12,
     lineHeight: 28,
   },
@@ -560,7 +753,7 @@ const styles = StyleSheet.create({
   },
   noticeModalDate: {
     fontSize: 13,
-    color: '#999',
+    color: COLORS.text.light,
   },
   noticeModalBody: {
     maxHeight: 300,
@@ -568,7 +761,42 @@ const styles = StyleSheet.create({
   },
   noticeModalMessage: {
     fontSize: 15,
-    color: '#333',
+    color: COLORS.text.primary,
     lineHeight: 24,
+  },
+  appStoreButton: {
+    backgroundColor: '#10B981',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
+  appStoreButtonText: {
+    color: COLORS.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  actionIcons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  iconBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#E0F2FE', // Light blue for edit
   },
 });

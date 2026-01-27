@@ -1,431 +1,347 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, PermissionsAndroid, Platform, Modal, TextInput, Dimensions, ScrollView } from 'react-native';
-import { getFirestore, collection, query, where, orderBy, onSnapshot, getDocs } from '@react-native-firebase/firestore';
-import { AttendanceRecord, UserProfile, LeaveRequest } from '../types';
+import React, { useState, useEffect, useCallback, memo } from 'react';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, TextInput, ScrollView, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { AttendanceRecord } from '../types';
 import { useAuthStore } from '../store/useAuthStore';
-import { format, parseISO, differenceInDays, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval, parse } from 'date-fns';
-import Share from 'react-native-share';
-import RNFS from 'react-native-fs';
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfDay, endOfDay } from 'date-fns';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { LineChart, BarChart } from 'react-native-chart-kit';
+import { COLORS } from '../constants/theme';
+import { useAttendanceAnalytics, DateFilterType } from '../hooks/useAttendanceAnalytics';
+import { exportAttendanceToCSV, exportComprehensiveReport, exportAttendanceWithAdvance } from '../utils/csvExport';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+import { useAds } from '../hooks/useAds';
+import DatePicker from 'react-native-date-picker';
+import { parse } from 'date-fns';
+import firestore from '@react-native-firebase/firestore';
 
-type DateFilterType = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH' | 'CUSTOM';
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Memoized User Item for smooth scrolling in Modal
+const UserItem = memo(({ item, isSelected, onToggle }: { item: any, isSelected: boolean, onToggle: (id: string) => void }) => (
+    <TouchableOpacity
+        style={[
+        styles.userItem,
+        isSelected && styles.selectedUserItem
+        ]}
+        onPress={() => onToggle(item.uid)}
+        activeOpacity={0.7}
+    >
+        <View style={{flexDirection:'row', alignItems:'center', gap: 10}}>
+        <Icon name={isSelected ? "checkbox" : "square-outline"} size={24} color={isSelected ? COLORS.primary : '#ccc'} />
+        <View>
+            <Text style={styles.userName}>{item.name}</Text>
+            {item.email && <Text style={styles.userEmail}>{item.email}</Text>}
+        </View>
+        </View>
+    </TouchableOpacity>
+), (prev, next) => prev.isSelected === next.isSelected && prev.item.uid === next.item.uid);
+
+// Memoized Helper for Status Color
+const getStatusColor = (status: string) => {
+    switch (status) {
+        case 'PRESENT': return COLORS.status.working;
+        case 'CHECKED_OUT': return COLORS.status.checkedOut;
+        case 'ON_BREAK': return COLORS.status.onBreak;
+        default: return COLORS.status.offline;
+    }
+};
+
+// Memoized Attendance Card
+const AttendanceCard = memo(({ item, onPress }: { item: AttendanceRecord, onPress: (item: AttendanceRecord) => void }) => {
+    const checkIn = item.checkInTime || (item as any).timestamp;
+    const checkOut = item.checkOutTime;
+    
+    // Date formatting
+    const dateObj = checkIn ? new Date(checkIn) : new Date();
+    const dayNum = format(dateObj, 'dd');
+    const monthStr = format(dateObj, 'MMM');
+    const dayName = format(dateObj, 'EEE');
+
+    const checkInTime = checkIn ? format(new Date(checkIn), 'h:mm a') : '--:--';
+    const checkOutTime = checkOut ? format(new Date(checkOut), 'h:mm a') : '--:--';
+    
+    let durationStr = '';
+    if (checkIn && checkOut) {
+        if (item.autoCheckout) {
+             const fixed = item.fixedHours || 7;
+             durationStr = `${fixed}h 0m (Auto)`;
+        } else {
+            let totalBreak = 0;
+            if (item.breaks) {
+                totalBreak = item.breaks.reduce((acc, b) => {
+                    const end = b.endTime || b.startTime;
+                    return acc + (end - b.startTime);
+                }, 0);
+            }
+            
+            const worked = checkOut - checkIn - totalBreak;
+            const hours = Math.floor(worked / (1000 * 60 * 60));
+            const minutes = Math.floor((worked / (1000 * 60)) % 60);
+            durationStr = `${hours}h ${minutes}m`;
+        }
+    }
+
+    const statusColor = getStatusColor(item.status);
+
+    return (
+      <TouchableOpacity 
+        style={[styles.card, { borderLeftColor: statusColor }]}
+        onPress={() => onPress(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardContent}>
+            {/* Date Box */}
+            <View style={styles.dateBox}>
+                <Text style={styles.dayNum}>{dayNum}</Text>
+                <Text style={styles.monthText}>{monthStr}</Text>
+                <Text style={styles.dayName}>{dayName}</Text>
+            </View>
+
+            {/* Main Info */}
+            <View style={styles.infoContainer}>
+                <View style={styles.headerRow}>
+                    <Text style={styles.cardUserName}>{item.userName}</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
+                        <Text style={[styles.statusText, { color: statusColor }]}>{item.status.replace('_', ' ')}</Text>
+                    </View>
+                </View>
+
+                {/* Time Row */}
+                <View style={styles.timeRow}>
+                    <View style={styles.timeBlock}>
+                        <Text style={styles.timeLabel}>Check In</Text>
+                        <View style={styles.timeValueRow}>
+                            <Icon name="log-in-outline" size={12} color={COLORS.status.present} />
+                            <Text style={styles.timeValue}>{checkInTime}</Text>
+                        </View>
+                    </View>
+                    
+                    <View style={styles.dividerVertical} />
+
+                    <View style={styles.timeBlock}>
+                        <Text style={styles.timeLabel}>Check Out</Text>
+                        <View style={styles.timeValueRow}>
+                            <Icon name="log-out-outline" size={12} color={COLORS.status.checkedOut} />
+                            <Text style={styles.timeValue}>{checkOutTime}</Text>
+                        </View>
+                    </View>
+                    
+                    {durationStr ? (
+                        <>
+                            <View style={styles.dividerVertical} />
+                            <View style={styles.timeBlock}>
+                                <Text style={styles.timeLabel}>Duration</Text>
+                                <View style={styles.timeValueRow}>
+                                    <Icon name="time-outline" size={12} color={COLORS.primary} />
+                                    <Text style={styles.timeValue}>{durationStr}</Text>
+                                </View>
+                            </View>
+                        </>
+                    ) : null}
+                </View>
+
+                {/* Footer Info */}
+                <View style={styles.footerRow}>
+                    <View style={styles.locationContainer}>
+                        <Icon name="location-sharp" size={12} color={COLORS.text.light} />
+                        <Text style={styles.locationText} numberOfLines={1}>{item.locationName || 'Unknown Location'}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+      </TouchableOpacity>
+    );
+});
 
 export const HistoryScreen = () => {
   const user = useAuthStore((state) => state.user);
-  const [records, setRecords] = useState<AttendanceRecord[]>([]);
-  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  
+  // Custom Hook for Logic
+  const { 
+    allUsers, 
+    filteredRecords, 
+    loading, 
+    error, 
+    statistics, 
+    chartData, 
+    filters 
+  } = useAttendanceAnalytics(user);
+
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('history');
+
+  const { selectedUserIds, setSelectedUserIds, dateFilterType, setDateFilterType, customStartDate, setCustomStartDate, customEndDate, setCustomEndDate } = filters;
+
+  // UI Local State
+  /* Optimization: Temp state for modal to avoid heavy re-renders on every selection */
+  const [tempSelectedIds, setTempSelectedIds] = useState<string[]>([]);
   const [showUserPicker, setShowUserPicker] = useState(false);
-  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
-
-  // Date Filter State
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [dateFilterType, setDateFilterType] = useState<DateFilterType>('ALL');
-  const [customStartDate, setCustomStartDate] = useState('');
-  const [customEndDate, setCustomEndDate] = useState('');
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
 
-  // Fetch all users (for admin dropdown)
+  const [searchText, setSearchText] = useState('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  
+  // Date Picker States
+  const [openStartDate, setOpenStartDate] = useState(false);
+  const [openEndDate, setOpenEndDate] = useState(false);
+
+  // Money Requests State
+  const [moneyRequests, setMoneyRequests] = useState<any[]>([]);
+  const [loadingMoneyRequests, setLoadingMoneyRequests] = useState(false);
+
+  // Fetch Money Requests based on filters
   useEffect(() => {
-    if (!user || user.role !== 'admin') return;
+    if (!user?.organizationId) return;
 
-    const db = getFirestore();
-    const unsubscribe = onSnapshot(
-      collection(db, 'users'),
-      (snapshot) => {
-        const users: UserProfile[] = [];
-        snapshot.forEach((doc: any) => {
-          users.push({ ...doc.data() } as UserProfile);
-        });
-        setAllUsers(users.filter(u => u.role === 'user')); // Only show regular users
-      },
-      (err) => {
-        console.error('Error fetching users:', err);
-      }
-    );
+    const fetchMoneyRequests = async () => {
+      setLoadingMoneyRequests(true);
+      try {
+        let query = firestore()
+          .collection('money_requests')
+          .where('organizationId', '==', user.organizationId);
 
-    return () => unsubscribe();
-  }, [user]);
-
-  // Fetch attendance records
-  useEffect(() => {
-    if (!user) return;
-
-    const db = getFirestore();
-    const constraints = [];
-
-    if (user.role !== 'admin') {
-      constraints.push(where('userId', '==', user.uid));
-    } else if (selectedUserId) {
-      constraints.push(where('userId', '==', selectedUserId));
-    }
-
-    const q = query(collection(db, 'attendance'), ...constraints as any);
-
-    const unsubscribe = onSnapshot(q,
-        (snapshot) => {
-          const recs: AttendanceRecord[] = [];
-          snapshot.forEach((doc: any) => {
-            recs.push({ id: doc.id, ...doc.data() } as AttendanceRecord);
-          });
-          recs.sort((a, b) => {
-            const timeA = a.checkInTime || (a as any).timestamp || 0;
-            const timeB = b.checkInTime || (b as any).timestamp || 0;
-            return timeB - timeA;
-          });
-          setRecords(recs);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Firestore error:', err);
-          setError(err.message);
-          setLoading(false);
-          if (err.message.includes('index')) {
-            setRecords([]);
-          }
+        // Filter by user if selected
+        if (selectedUserIds.length === 1) {
+          query = query.where('userId', '==', selectedUserIds[0]);
         }
-      );
 
-    return () => unsubscribe();
-  }, [user, selectedUserId]);
+        const snapshot = await query.get();
+        let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-  // Fetch leave requests
-  useEffect(() => {
-    if (!user) return;
+        // Client-side filter for multiple users
+        if (selectedUserIds.length > 1) {
+            requests = requests.filter(req => selectedUserIds.includes((req as any).userId));
+        }
 
-    const db = getFirestore();
-    const constraints = [where('status', '==', 'APPROVED')];
+        // Filter by date range
+        const now = new Date();
+        let startDate: Date, endDate: Date;
 
-    if (user.role !== 'admin') {
-      constraints.push(where('userId', '==', user.uid));
-    } else if (selectedUserId) {
-      constraints.push(where('userId', '==', selectedUserId));
-    }
-
-    const q = query(collection(db, 'leaves'), ...constraints as any);
-
-    const unsubscribe = onSnapshot(q,
-      (snapshot) => {
-        const leaveList: LeaveRequest[] = [];
-        snapshot.forEach((doc: any) => {
-          leaveList.push({ id: doc.id, ...doc.data() } as LeaveRequest);
-        });
-        setLeaves(leaveList);
-      },
-      (err) => {
-        console.error('Error fetching leaves:', err);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user, selectedUserId]);
-
-  // Filter Records based on Date
-  const filteredRecords = useMemo(() => {
-      if (dateFilterType === 'ALL') return records;
-
-      const now = new Date();
-      let start: Date, end: Date;
-
-      switch (dateFilterType) {
+        switch (dateFilterType) {
           case 'TODAY':
-              start = startOfDay(now);
-              end = endOfDay(now);
-              break;
+            startDate = startOfDay(now);
+            endDate = endOfDay(now);
+            break;
           case 'WEEK':
-              start = startOfWeek(now, { weekStartsOn: 1 }); // Monday start
-              end = endOfWeek(now, { weekStartsOn: 1 });
-              break;
+            startDate = startOfWeek(now);
+            endDate = endOfWeek(now);
+            break;
           case 'MONTH':
-              start = startOfMonth(now);
-              end = endOfMonth(now);
-              break;
+            startDate = startOfMonth(now);
+            endDate = endOfMonth(now);
+            break;
           case 'CUSTOM':
-              if (!customStartDate || !customEndDate) return records;
-              try {
-                  start = startOfDay(parse(customStartDate, 'yyyy-MM-dd', new Date()));
-                  end = endOfDay(parse(customEndDate, 'yyyy-MM-dd', new Date()));
-              } catch (e) {
-                  return records;
-              }
-              break;
+            startDate = parse(customStartDate, 'yyyy-MM-dd', new Date());
+            endDate = parse(customEndDate, 'yyyy-MM-dd', new Date());
+            break;
           default:
-              return records;
-      }
-
-      return records.filter(record => {
-          const recordDate = new Date(record.checkInTime || (record as any).timestamp);
-          return isWithinInterval(recordDate, { start, end });
-      });
-  }, [records, dateFilterType, customStartDate, customEndDate]);
-
-  // Calculate statistics based on FILTERED records
-  const statistics = useMemo(() => {
-    const totalPresent = filteredRecords.filter(r => r.status === 'CHECKED_OUT' || r.status === 'PRESENT').length;
-    
-    const totalLeaveDays = leaves.reduce((acc, leave) => {
-      const start = parseISO(leave.startDate);
-      const end = parseISO(leave.endDate);
-      return acc + differenceInDays(end, start) + 1;
-    }, 0);
-
-    let totalWorkingMs = 0;
-    filteredRecords.forEach(record => {
-      if (record.checkInTime && record.checkOutTime) {
-        let totalBreak = 0;
-        if (record.breaks) {
-          totalBreak = record.breaks.reduce((acc, b) => {
-            const end = b.endTime || b.startTime;
-            return acc + (end - b.startTime);
-          }, 0);
+            startDate = new Date(0);
+            endDate = now;
         }
-        totalWorkingMs += (record.checkOutTime - record.checkInTime - totalBreak);
+
+        requests = requests.filter(req => {
+          const r = req as any;
+          if (!r.requestDate) return false;
+          const reqDate = new Date(r.requestDate);
+          return reqDate >= startDate && reqDate <= endDate;
+        });
+
+        setMoneyRequests(requests);
+      } catch (error) {
+        console.error('Error fetching money requests:', error);
+      } finally {
+        setLoadingMoneyRequests(false);
       }
-    });
-
-    const totalWorkingHours = Math.floor(totalWorkingMs / (1000 * 60 * 60));
-
-    const uniqueDates = new Set(filteredRecords.map(r => r.date));
-    const totalDaysMarked = uniqueDates.size;
-
-    return {
-      totalPresent,
-      totalLeaveDays,
-      totalWorkingHours,
-      totalDaysMarked,
     };
-  }, [filteredRecords, leaves]);
 
-  // Chart Data Preparation
-  const chartData = useMemo(() => {
-      if (filteredRecords.length === 0) return null;
+    fetchMoneyRequests();
+  }, [user?.organizationId, selectedUserIds, dateFilterType, customStartDate, customEndDate]);
 
-      // Group by date
-      const grouped = filteredRecords.reduce((acc, record) => {
-          const date = format(new Date(record.checkInTime || (record as any).timestamp), 'MM/dd');
-          if (!acc[date]) {
-              acc[date] = { count: 0, hours: 0 };
-          }
-          acc[date].count += 1;
-          
-          if (record.checkInTime && record.checkOutTime) {
-              let totalBreak = 0;
-              if (record.breaks) {
-                  totalBreak = record.breaks.reduce((bAcc, b) => {
-                      const end = b.endTime || b.startTime;
-                      return bAcc + (end - b.startTime);
-                  }, 0);
-              }
-              const worked = record.checkOutTime - record.checkInTime - totalBreak;
-              acc[date].hours += worked / (1000 * 60 * 60);
-          }
-          return acc;
-      }, {} as Record<string, { count: number, hours: number }>);
-
-      const labels = Object.keys(grouped).sort();
-      const attendanceCounts = labels.map(date => grouped[date].count);
-      const workingHours = labels.map(date => grouped[date].hours);
-
-      return {
-          labels,
-          attendanceCounts,
-          workingHours
-      };
-  }, [filteredRecords]);
-
-  const screenWidth = Dimensions.get('window').width;
-
-  const chartConfig = {
-    backgroundGradientFrom: "#fff",
-    backgroundGradientTo: "#fff",
-    color: (opacity = 1) => `rgba(102, 126, 234, ${opacity})`,
-    strokeWidth: 2,
-    barPercentage: 0.5,
-    decimalPlaces: 1,
-    labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-  };
-
-  const formatDuration = (ms: number) => {
-    const seconds = Math.floor((ms / 1000) % 60);
-    const minutes = Math.floor((ms / (1000 * 60)) % 60);
-    const hours = Math.floor((ms / (1000 * 60 * 60)));
-    return `${hours}h ${minutes}m`;
-  };
-
-  const requestStoragePermission = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') {
-      return true;
-    }
-
-    try {
-      if (Platform.Version >= 33) {
-        return true;
-      } else if (Platform.Version >= 30) {
-        return true;
-      } else {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: 'Storage Permission',
-            message: 'This app needs access to your storage to export CSV files.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
+  const displayedRecords = React.useMemo(() => {
+      let data = [...filteredRecords];
+      // Local Search (Admin mainly)
+      if (searchText) {
+          const lower = searchText.toLowerCase();
+          data = data.filter(r => r.userName.toLowerCase().includes(lower));
       }
-    } catch (err) {
-      console.warn('Permission request error:', err);
-      return false;
-    }
-  };
+      // Local Sort
+      return data.sort((a, b) => {
+           const timeA = a.checkInTime || (a as any).timestamp;
+           const timeB = b.checkInTime || (b as any).timestamp;
+           return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+      });
+  }, [filteredRecords, searchText, sortOrder]);
+
+  // Smooth Layout Animation when list changes
+  useEffect(() => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  }, [displayedRecords.length, sortOrder]);
+
+  const handleCardPress = useCallback((item: AttendanceRecord) => {
+      setSelectedRecord(item);
+      setDetailModalVisible(true);
+  }, []);
+
+  const [exporting, setExporting] = useState(false);
 
   const handleExport = async () => {
     if (filteredRecords.length === 0) {
-        Alert.alert('No Data', 'There are no records to export for the selected range.');
+        Alert.alert('No Data', 'No attendance data to export');
         return;
     }
 
     setExporting(true);
     try {
-        const hasPermission = await requestStoragePermission();
-        if (!hasPermission) {
-            Alert.alert('Permission Denied', 'Storage permission is required to export CSV files.');
-            setExporting(false);
-            return;
+        const advanceMap: Record<string, number> = {};
+        moneyRequests.forEach((req: any) => {
+             // Assuming moneyRequests are already filtered by date and user
+             const uid = req.userId;
+             if (!advanceMap[uid]) advanceMap[uid] = 0;
+             advanceMap[uid] += (Number(req.amount) || 0);
+        });
+
+        let start = new Date(0);
+        let end = new Date();
+        const now = new Date();
+
+        switch (dateFilterType) {
+            case 'TODAY':
+                start = startOfDay(now);
+                end = endOfDay(now);
+                break;
+            case 'WEEK':
+                // Assuming week starts on Monday as per hook
+                start = startOfWeek(now, { weekStartsOn: 1 });
+                end = endOfWeek(now, { weekStartsOn: 1 });
+                break;
+            case 'MONTH':
+                start = startOfMonth(now);
+                end = endOfMonth(now);
+                break;
+            case 'CUSTOM':
+                if (customStartDate && customEndDate) {
+                   // parse expects specific format
+                   start = parse(customStartDate, 'yyyy-MM-dd', new Date());
+                   end = parse(customEndDate, 'yyyy-MM-dd', new Date());
+                }
+                break;
         }
 
-        const selectedUser = selectedUserId ? allUsers.find(u => u.uid === selectedUserId) : null;
-        const userName = selectedUser ? selectedUser.name : 'All Users';
+        const fromDate = format(start, 'yyyy-MM-dd');
+        const toDate = format(end, 'yyyy-MM-dd');
+        const fileNamePrefix = `attendance_${fromDate}_${toDate}`;
 
-        let summarySection = `ATTENDANCE REPORT\n`;
-        summarySection += `User,${userName}\n`;
-        summarySection += `Date Range,${dateFilterType === 'CUSTOM' ? `${customStartDate} to ${customEndDate}` : dateFilterType}\n`;
-        summarySection += `Generated On,${format(new Date(), 'dd/MM/yyyy HH:mm:ss')}\n`;
-        summarySection += `\n`;
-        summarySection += `STATISTICS\n`;
-        summarySection += `Total Present Days,${statistics.totalPresent}\n`;
-        summarySection += `Total Working Hours,${statistics.totalWorkingHours}h\n`;
-        summarySection += `\n`;
-        summarySection += `DETAILED RECORDS\n`;
-
-        const header = 'User Name,Date,Check In,Check Out,Duration,Breaks Count,Total Break Time,Break Details,Status,Location\n';
-        const rows = filteredRecords.map(item => {
-            const checkIn = item.checkInTime || (item as any).timestamp;
-            const checkOut = item.checkOutTime;
-            
-            let dateStr = checkIn ? format(new Date(checkIn), 'dd/MM/yyyy') : '';
-            let timeInStr = checkIn ? format(new Date(checkIn), 'HH:mm:ss') : '';
-            let timeOutStr = checkOut ? format(new Date(checkOut), 'HH:mm:ss') : '';
-            
-            let durationStr = '';
-            let breaksCount = 0;
-            let totalBreakTime = 0;
-            let breakDetails = '';
-            
-            if (item.breaks && item.breaks.length > 0) {
-                breaksCount = item.breaks.length;
-                
-                const breakList = item.breaks.map((b, index) => {
-                    const start = format(new Date(b.startTime), 'HH:mm:ss');
-                    const end = b.endTime ? format(new Date(b.endTime), 'HH:mm:ss') : 'Ongoing';
-                    const duration = b.endTime ? b.endTime - b.startTime : 0;
-                    totalBreakTime += duration;
-                    
-                    const durationMin = Math.floor(duration / 60000);
-                    return `Break ${index + 1}: ${start} - ${end} (${durationMin}min)`;
-                }).join('; ');
-                
-                breakDetails = breakList;
-            }
-            
-            const totalBreakStr = formatDuration(totalBreakTime);
-            
-            if (checkIn && checkOut) {
-                const worked = checkOut - checkIn - totalBreakTime;
-                durationStr = formatDuration(worked);
-            }
-
-            const escapeField = (field: string) => `"${field.replace(/"/g, '""')}"`;
-            
-            return `${escapeField(item.userName)},${escapeField(dateStr)},${escapeField(timeInStr)},${escapeField(timeOutStr)},${escapeField(durationStr)},${breaksCount},${escapeField(totalBreakStr)},${escapeField(breakDetails)},${escapeField(item.status)},${escapeField(item.locationName)}`;
-        }).join('\n');
-
-        const csvContent = summarySection + header + rows;
-        
-        const userSuffix = selectedUser ? `_${selectedUser.name.replace(/\s+/g, '_')}` : '';
-        const rangeSuffix = `_${dateFilterType}`;
-        const fileName = `attendance${userSuffix}${rangeSuffix}_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`;
-        const path = `${RNFS.CachesDirectoryPath}/${fileName}`;
-        
-        await RNFS.writeFile(path, csvContent, 'utf8');
-        
-        const shareOptions = {
-            title: `Export Attendance Report`,
-            url: Platform.OS === 'android' ? `file://${path}` : path,
-            type: 'text/csv',
-            filename: fileName,
-            failOnCancel: false,
-        };
-
-        await Share.open(shareOptions);
-
-    } catch (error: any) {
-        console.error('Export error:', error);
-        Alert.alert('Export Error', error.message || 'Failed to export CSV.');
+        await exportAttendanceWithAdvance(filteredRecords, advanceMap, fileNamePrefix);
+    } catch (error) {
+        // handled in util
     } finally {
         setExporting(false);
     }
-  };
-
-  const renderItem = ({ item }: { item: AttendanceRecord }) => {
-    const checkIn = item.checkInTime || (item as any).timestamp;
-    const checkOut = item.checkOutTime;
-    
-    let dateStr = 'Unknown Date';
-    let timeStr = '';
-    
-    if (checkIn) {
-        dateStr = format(new Date(checkIn), 'PP');
-        timeStr = format(new Date(checkIn), 'p');
-        if (checkOut) {
-            timeStr += ` - ${format(new Date(checkOut), 'p')}`;
-        } else if (item.status === 'PRESENT') {
-            timeStr += ' - Now';
-        }
-    }
-
-    let durationStr = '';
-    if (checkIn && checkOut) {
-        let totalBreak = 0;
-        if (item.breaks) {
-            totalBreak = item.breaks.reduce((acc, b) => {
-                const end = b.endTime || b.startTime;
-                return acc + (end - b.startTime);
-            }, 0);
-        }
-        const worked = checkOut - checkIn - totalBreak;
-        durationStr = ` • ${formatDuration(worked)}`;
-    }
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.name}>{item.userName}</Text>
-          <Text style={[styles.status, { 
-              color: item.status === 'CHECKED_OUT' ? 'gray' : 
-                     item.status === 'PRESENT' ? 'green' : 'orange' 
-          }]}>{item.status}</Text>
-        </View>
-        <Text style={styles.location}>{item.locationName}</Text>
-        <Text style={styles.time}>{dateStr} • {timeStr}{durationStr}</Text>
-      </View>
-    );
   };
 
   const getFilterLabel = () => {
@@ -438,89 +354,220 @@ export const HistoryScreen = () => {
       }
   };
 
+  const renderAttendanceItem = useCallback(({ item }: { item: AttendanceRecord }) => {
+      return <AttendanceCard item={item} onPress={handleCardPress} />;
+  }, [handleCardPress]);
+
+  const renderUserItem = useCallback(({ item }: { item: any }) => {
+      return (
+        <UserItem 
+            item={item} 
+            isSelected={tempSelectedIds.includes(item.uid)} 
+            onToggle={(uid) => {
+                setTempSelectedIds(prev => {
+                    if (prev.includes(uid)) return prev.filter(id => id !== uid);
+                    return [...prev, uid];
+                });
+            }}
+        />
+      );
+  }, [tempSelectedIds]);
+
+
+  const chartConfig = {
+    backgroundGradientFrom: "#fff",
+    backgroundGradientTo: "#fff",
+    color: (opacity = 1) => COLORS.primary,
+    strokeWidth: 2,
+    barPercentage: 0.5,
+    decimalPlaces: 1,
+    labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  };
+
   return (
-    <View style={styles.container}>
-      {/* Header with Export Button */}
-      {user?.role === 'admin' && (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
+      {/* Header with Icon Buttons */}
+      {user?.role !== 'user' && (
         <View style={styles.headerContainer}>
             <Text style={styles.headerTitle}>Attendance History</Text>
-            <TouchableOpacity 
-                style={styles.exportButton} 
-                onPress={handleExport}
-                disabled={exporting || loading}
-            >
-                {exporting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.exportText}>Export CSV</Text>}
-            </TouchableOpacity>
+            <View style={{flexDirection: 'row', gap: 8}}>
+                {/* User Selection Button - Icon Only */}
+                <TouchableOpacity 
+                    style={[styles.iconButton, {backgroundColor: '#6366F1'}]} 
+                    onPress={() => {
+                        setTempSelectedIds(selectedUserIds);
+                        setShowUserPicker(true);
+                    }}
+                >
+                    <Icon name="person-outline" size={20} color="#fff" />
+                </TouchableOpacity>
+                
+                {/* Date Range Button - Icon Only */}
+                <TouchableOpacity 
+                    style={[styles.iconButton, {backgroundColor: '#8B5CF6'}]} 
+                    onPress={() => setShowDateFilter(true)}
+                >
+                    <Icon name="calendar-outline" size={20} color="#fff" />
+                </TouchableOpacity>
+                
+                {/* Export CSV Button - Icon Only */}
+                <TouchableOpacity 
+                    style={[styles.iconButton, {backgroundColor: COLORS.primary}]} 
+                    onPress={handleExport}
+                    disabled={exporting || loading}
+                >
+                    {exporting ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                        <Icon name="download-outline" size={20} color="#fff" />
+                    )}
+                </TouchableOpacity>
+            </View>
         </View>
       )}
 
-      {/* Filters (Admin Only) */}
-      {user?.role === 'admin' && (
-        <View style={styles.filterContainer}>
-          {/* User Filter */}
-          <TouchableOpacity 
-            style={styles.filterButton}
-            onPress={() => setShowUserPicker(true)}
-          >
-            <Icon name="person-outline" size={20} color="#667eea" />
-            <Text style={styles.filterButtonText} numberOfLines={1}>
-              {selectedUserId ? allUsers.find(u => u.uid === selectedUserId)?.name || 'Select User' : 'All Users'}
-            </Text>
-            <Icon name="chevron-down" size={20} color="#667eea" />
-          </TouchableOpacity>
-          {selectedUserId && (
-            <TouchableOpacity 
-              style={styles.clearFilterButton}
-              onPress={() => setSelectedUserId(null)}
-            >
-              <Icon name="close-circle" size={20} color="#ff6b6b" />
-            </TouchableOpacity>
-          )}
+      {/* Professional Search & Filter Bar */}
+      <View style={styles.filterSection}>
+        {/* Top Row: Search (Admin) & Sort */}
+        {/* Search Row (Admin Only) */}
+        {user?.role !== 'user' && (
+            <View style={styles.searchRow}>
+                <View style={styles.searchContainer}>
+                    <Icon name="search" size={20} color={COLORS.text.secondary} style={{ marginRight: 8 }} />
+                    <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search employee..."
+                        placeholderTextColor={COLORS.text.light}
+                        value={searchText}
+                        onChangeText={setSearchText}
+                    />
+                     {searchText.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchText('')}>
+                            <Icon name="close-circle" size={18} color={COLORS.text.light} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
+        )}
 
-          {/* Date Filter */}
-          <TouchableOpacity 
-            style={styles.filterButton}
-            onPress={() => setShowDateFilter(true)}
-          >
-            <Icon name="calendar-outline" size={20} color="#667eea" />
-            <Text style={styles.filterButtonText} numberOfLines={1}>
-              {getFilterLabel()}
-            </Text>
-            <Icon name="chevron-down" size={20} color="#667eea" />
-          </TouchableOpacity>
+        {/* Filters Row: Sort (Icon) + Date Chips */}
+        <View style={styles.filterRow}>
+            <TouchableOpacity 
+                style={styles.iconSortButton} 
+                onPress={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+            >
+                <Icon name={sortOrder === 'desc' ? "arrow-down" : "arrow-up"} size={22} color={COLORS.text.primary} />
+            </TouchableOpacity>
+
+            <View style={styles.verticalDivider} />
+
+            <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false} 
+                contentContainerStyle={styles.filterChipsContainer}
+            >
+                {[
+                    { label: 'All', value: 'ALL', icon: 'apps-outline' },
+                    { label: 'Today', value: 'TODAY', icon: 'today-outline' },
+                    { label: 'Week', value: 'WEEK', icon: 'calendar-outline' },
+                    { label: 'Month', value: 'MONTH', icon: 'calendar-number-outline' },
+                    { label: 'Custom', value: 'CUSTOM', icon: 'options-outline' },
+                ].map((filter) => (
+                    <TouchableOpacity
+                        key={filter.value}
+                        style={[
+                            styles.filterChip,
+                            dateFilterType === filter.value && styles.activeFilterChip
+                        ]}
+                        onPress={() => {
+                            if (filter.value === 'CUSTOM') {
+                                setShowDateFilter(true);
+                            } else {
+                                setDateFilterType(filter.value as any);
+                            }
+                        }}
+                    >
+                        <Icon 
+                            name={filter.icon} 
+                            size={14} 
+                            color={dateFilterType === filter.value ? '#fff' : COLORS.text.secondary} 
+                        />
+                        <Text style={[
+                            styles.filterChipText,
+                            dateFilterType === filter.value && styles.activeFilterChipText
+                        ]}>
+                            {filter.label}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
         </View>
+      </View>
+
+      {/* Date Range Badges (if Custom) */}
+      {dateFilterType === 'CUSTOM' && (
+          <View style={styles.activeFiltersRow}>
+              <View style={styles.activeFilterBadge}>
+                  <Text style={styles.activeFilterText}>{customStartDate} - {customEndDate}</Text>
+                  <TouchableOpacity onPress={() => setDateFilterType('ALL')}>
+                      <Icon name="close" size={14} color={COLORS.primary} />
+                  </TouchableOpacity>
+              </View>
+          </View>
       )}
 
       <FlatList
-        data={filteredRecords}
-        renderItem={renderItem}
+        data={displayedRecords}
+        renderItem={renderAttendanceItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: 100 }]}
+        ListEmptyComponent={
+            !loading ? (
+                <View style={styles.emptyContainer}>
+                    <Icon name="clipboard-outline" size={64} color="#E5E7EB" />
+                    <Text style={styles.emptyTitle}>No records found</Text>
+                    <Text style={styles.emptySubtitle}>
+                        Try adjusting your filters or search criteria.
+                    </Text>
+                </View>
+            ) : null
+        }
         ListHeaderComponent={
             <>
                 {/* Statistics Card */}
-                {(selectedUserId || user?.role !== 'admin' || dateFilterType !== 'ALL') && filteredRecords.length > 0 && (
+                {(selectedUserIds.length > 0 || user?.role === 'user' || dateFilterType !== 'ALL') && filteredRecords.length > 0 && (
                     <View style={styles.statsCard}>
                     <Text style={styles.statsTitle}>📊 Summary ({getFilterLabel()})</Text>
                     <View style={styles.statsGrid}>
                         <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{statistics.totalPresent}</Text>
-                        <Text style={styles.statLabel}>Present</Text>
+                            <Text style={[styles.statValue, { color: COLORS.status.present }]}>{statistics.totalPresent}</Text>
+                            <Text style={styles.statLabel}>Present</Text>
                         </View>
                         <View style={styles.statItem}>
-                        <Text style={[styles.statValue, { color: '#667eea' }]}>{statistics.totalWorkingHours}h</Text>
-                        <Text style={styles.statLabel}>Hours</Text>
+                            <Text style={[styles.statValue, { color: COLORS.primary }]}>{statistics.totalWorkingHours}h</Text>
+                            <Text style={styles.statLabel}>Hours</Text>
                         </View>
                         <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{statistics.totalDaysMarked}</Text>
-                        <Text style={styles.statLabel}>Days</Text>
+                            <Text style={[styles.statValue, { color: '#333' }]}>{statistics.totalDaysMarked}</Text>
+                            <Text style={styles.statLabel}>Days</Text>
                         </View>
                     </View>
                     </View>
                 )}
 
                 {/* Charts Section */}
-                {(selectedUserId || user?.role !== 'admin' || dateFilterType !== 'ALL') && chartData && chartData.labels.length > 0 && (
+                {(selectedUserIds.length > 0 || user?.role === 'user' || dateFilterType !== 'ALL') && chartData && chartData.labels.length > 0 && (
                     <View>
                         <View style={styles.chartCard}>
                             <Text style={styles.chartTitle}>📈 Daily Working Hours</Text>
@@ -530,9 +577,12 @@ export const HistoryScreen = () => {
                                         labels: chartData.labels,
                                         datasets: [{ data: chartData.workingHours }]
                                     }}
-                                    width={Math.max(screenWidth - 60, chartData.labels.length * 50)}
+                                    width={Math.max(350, chartData.labels.length * 50)}
                                     height={220}
-                                    chartConfig={chartConfig}
+                                    chartConfig={{
+                                        ...chartConfig,
+                                        color: (opacity = 1) => COLORS.primary,
+                                    }}
                                     bezier
                                     style={styles.chart}
                                 />
@@ -547,13 +597,13 @@ export const HistoryScreen = () => {
                                         labels: chartData.labels,
                                         datasets: [{ data: chartData.attendanceCounts }]
                                     }}
-                                    width={Math.max(screenWidth - 60, chartData.labels.length * 50)}
+                                    width={Math.max(350, chartData.labels.length * 50)}
                                     height={220}
                                     yAxisLabel=""
                                     yAxisSuffix=""
                                     chartConfig={{
                                         ...chartConfig,
-                                        color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
+                                        color: (opacity = 1) => COLORS.status.present,
                                     }}
                                     style={styles.chart}
                                 />
@@ -563,12 +613,9 @@ export const HistoryScreen = () => {
                 )}
             </>
         }
-        ListEmptyComponent={
-            !loading && !error ? <Text style={styles.emptyText}>No records found for this period.</Text> : null
-        }
+
       />
 
-      {/* User Picker Modal */}
       <Modal
         visible={showUserPicker}
         transparent={true}
@@ -578,34 +625,25 @@ export const HistoryScreen = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select User</Text>
-              <TouchableOpacity onPress={() => setShowUserPicker(false)}>
-                <Icon name="close" size={24} color="#333" />
-              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Select Users</Text>
+              <View style={{flexDirection: 'row', gap: 10}}>
+                  <TouchableOpacity onPress={() => setTempSelectedIds([])}>
+                      <Text style={{color: COLORS.primary, fontWeight: '600'}}>Clear</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => {
+                      setSelectedUserIds(tempSelectedIds);
+                      setShowUserPicker(false);
+                  }}>
+                    <Text style={{color: COLORS.primary, fontWeight: 'bold'}}>Done</Text>
+                  </TouchableOpacity>
+              </View>
             </View>
             <FlatList
-              data={[{ uid: null, name: 'All Users', email: '' } as any, ...allUsers]}
-              keyExtractor={(item) => item.uid || 'all'}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.userItem,
-                    selectedUserId === item.uid && styles.selectedUserItem
-                  ]}
-                  onPress={() => {
-                    setSelectedUserId(item.uid);
-                    setShowUserPicker(false);
-                  }}
-                >
-                  <View>
-                    <Text style={styles.userName}>{item.name}</Text>
-                    {item.email && <Text style={styles.userEmail}>{item.email}</Text>}
-                  </View>
-                  {selectedUserId === item.uid && (
-                    <Icon name="checkmark-circle" size={24} color="#667eea" />
-                  )}
-                </TouchableOpacity>
-              )}
+              data={allUsers}
+              keyExtractor={(item) => item.uid}
+              initialNumToRender={15}
+              windowSize={5}
+              renderItem={renderUserItem}
             />
           </View>
         </View>
@@ -621,9 +659,9 @@ export const HistoryScreen = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Time Period</Text>
-              <TouchableOpacity onPress={() => setShowDateFilter(false)}>
-                <Icon name="close" size={24} color="#333" />
+              <Text style={styles.modalTitle}>Refine Period</Text>
+              <TouchableOpacity onPress={() => setShowDateFilter(false)} style={styles.closeBtn}>
+                <Icon name="close" size={20} color="#333" />
               </TouchableOpacity>
             </View>
             
@@ -634,15 +672,23 @@ export const HistoryScreen = () => {
                         style={[styles.dateOption, dateFilterType === type && styles.selectedDateOption]}
                         onPress={() => {
                             setDateFilterType(type as DateFilterType);
+                            // Auto close for Today/Week
                             if (type !== 'CUSTOM') setShowDateFilter(false);
                         }}
                     >
-                        <Text style={[styles.dateOptionText, dateFilterType === type && styles.selectedDateOptionText]}>
-                            {type === 'ALL' ? 'All Time' : 
-                             type === 'TODAY' ? 'Today' : 
-                             type === 'WEEK' ? 'This Week' : 'This Month'}
-                        </Text>
-                        {dateFilterType === type && <Icon name="checkmark" size={20} color="#fff" />}
+                        <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+                            <Icon 
+                                name={type === 'ALL' ? 'infinite' : type === 'TODAY' ? 'today' : type === 'WEEK' ? 'calendar' : 'calendar-number'} 
+                                size={20} 
+                                color={dateFilterType === type ? COLORS.white : COLORS.text.secondary} 
+                            />
+                            <Text style={[styles.dateOptionText, dateFilterType === type && styles.selectedDateOptionText]}>
+                                {type === 'ALL' ? 'All Time' : 
+                                 type === 'TODAY' ? 'Today' : 
+                                 type === 'WEEK' ? 'This Week' : 'This Month'}
+                            </Text>
+                        </View>
+                        {dateFilterType === type && <Icon name="checkmark-circle" size={20} color="#fff" />}
                     </TouchableOpacity>
                 ))}
 
@@ -650,30 +696,40 @@ export const HistoryScreen = () => {
                     style={[styles.dateOption, dateFilterType === 'CUSTOM' && styles.selectedDateOption]}
                     onPress={() => setDateFilterType('CUSTOM')}
                 >
-                    <Text style={[styles.dateOptionText, dateFilterType === 'CUSTOM' && styles.selectedDateOptionText]}>
-                        Custom Range
-                    </Text>
-                    {dateFilterType === 'CUSTOM' && <Icon name="checkmark" size={20} color="#fff" />}
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+                        <Icon name="options" size={20} color={dateFilterType === 'CUSTOM' ? COLORS.white : COLORS.text.secondary} />
+                        <Text style={[styles.dateOptionText, dateFilterType === 'CUSTOM' && styles.selectedDateOptionText]}>
+                            Custom Range
+                        </Text>
+                    </View>
+                    {dateFilterType === 'CUSTOM' && <Icon name="checkmark-circle" size={20} color="#fff" />}
                 </TouchableOpacity>
 
                 {dateFilterType === 'CUSTOM' && (
                     <View style={styles.customDateContainer}>
-                        <Text style={styles.customDateLabel}>Enter dates (YYYY-MM-DD):</Text>
+                        <Text style={styles.customDateLabel}>Select Date Range</Text>
                         <View style={styles.dateInputRow}>
-                            <TextInput
-                                style={styles.dateInput}
-                                placeholder="Start (YYYY-MM-DD)"
-                                value={customStartDate}
-                                onChangeText={setCustomStartDate}
-                                placeholderTextColor="#999"
-                            />
-                            <TextInput
-                                style={styles.dateInput}
-                                placeholder="End (YYYY-MM-DD)"
-                                value={customEndDate}
-                                onChangeText={setCustomEndDate}
-                                placeholderTextColor="#999"
-                            />
+                            <View style={{flex: 1}}>
+                                <Text style={styles.dateInputLabel}>Start Date</Text>
+                                <TouchableOpacity 
+                                    style={styles.datePickerButton}
+                                    onPress={() => setOpenStartDate(true)}
+                                >
+                                    <Icon name="calendar-outline" size={18} color={COLORS.primary} />
+                                    <Text style={styles.datePickerText}>{customStartDate || 'YYYY-MM-DD'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={{width: 10}} />
+                            <View style={{flex: 1}}>
+                                <Text style={styles.dateInputLabel}>End Date</Text>
+                                <TouchableOpacity 
+                                    style={styles.datePickerButton}
+                                    onPress={() => setOpenEndDate(true)}
+                                >
+                                    <Icon name="calendar-outline" size={18} color={COLORS.primary} />
+                                    <Text style={styles.datePickerText}>{customEndDate || 'YYYY-MM-DD'}</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                         <TouchableOpacity 
                             style={styles.applyButton}
@@ -686,288 +742,624 @@ export const HistoryScreen = () => {
             </View>
           </View>
         </View>
+        <DatePicker
+            modal
+            open={openStartDate}
+            date={customStartDate ? new Date(customStartDate) : new Date()}
+            mode="date"
+            onConfirm={(date) => {
+              setOpenStartDate(false);
+              setCustomStartDate(format(date, 'yyyy-MM-dd'));
+            }}
+            onCancel={() => setOpenStartDate(false)}
+        />
+        <DatePicker
+            modal
+            open={openEndDate}
+            date={customEndDate ? new Date(customEndDate) : new Date()}
+            mode="date"
+            onConfirm={(date) => {
+              setOpenEndDate(false);
+              setCustomEndDate(format(date, 'yyyy-MM-dd'));
+            }}
+            onCancel={() => setOpenEndDate(false)}
+        />
       </Modal>
 
-      {loading && (
-        <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color="#007AFF" />
+      {/* Detail Modal */}
+      <Modal
+        visible={detailModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setDetailModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+            <View style={styles.detailModalContent}>
+                <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Daily Details</Text>
+                    <TouchableOpacity onPress={() => setDetailModalVisible(false)} style={styles.closeBtn}>
+                        <Icon name="close" size={24} color="#333" />
+                    </TouchableOpacity>
+                </View>
+
+                {selectedRecord && (
+                    <ScrollView contentContainerStyle={styles.detailScroll}>
+                        {/* Header Section */}
+                        <View style={styles.detailHeader}>
+                             <Text style={styles.detailDate}>
+                                 {format(new Date(selectedRecord.checkInTime || (selectedRecord as any).timestamp), 'EEEE, MMMM do, yyyy')}
+                             </Text>
+                             <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedRecord.status) + '20', alignSelf: 'flex-start', marginTop: 8 }]}>
+                                <Text style={[styles.statusText, { color: getStatusColor(selectedRecord.status) }]}>{selectedRecord.status.replace('_', ' ')}</Text>
+                            </View>
+                        </View>
+
+                        {/* Timing Grid */}
+                        <View style={styles.detailGrid}>
+                            <View style={styles.detailItem}>
+                                <Text style={styles.detailLabel}>Check In</Text>
+                                <Text style={styles.detailValue}>
+                                    {selectedRecord.checkInTime ? format(new Date(selectedRecord.checkInTime), 'h:mm a') : '--:--'}
+                                </Text>
+                            </View>
+                            <View style={styles.detailItem}>
+                                <Text style={styles.detailLabel}>Check Out</Text>
+                                <Text style={styles.detailValue}>
+                                    {selectedRecord.checkOutTime ? format(new Date(selectedRecord.checkOutTime), 'h:mm a') : '--:--'}
+                                </Text>
+                            </View>
+                        </View>
+
+                        {/* Breaks Section */}
+                        <View style={styles.sectionContainer}>
+                            <Text style={styles.sectionTitle}>Break History</Text>
+                             {selectedRecord.breaks && selectedRecord.breaks.length > 0 ? (
+                                 selectedRecord.breaks.map((brk, index) => (
+                                     <View key={index} style={styles.breakRow}>
+                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                             <Icon name="cafe-outline" size={16} color={COLORS.text.secondary} />
+                                             <Text style={styles.breakTime}>
+                                                 {format(new Date(brk.startTime), 'h:mm a')} - {brk.endTime ? format(new Date(brk.endTime), 'h:mm a') : 'Now'}
+                                             </Text>
+                                         </View>
+                                         <Text style={styles.breakDuration}>
+                                            {brk.endTime ? Math.floor((brk.endTime - brk.startTime) / 60000) + ' min' : 'Ongoing'}
+                                         </Text>
+                                     </View>
+                                 ))
+                             ) : (
+                                 <Text style={styles.noDataText}>No breaks taken.</Text>
+                             )}
+                        </View>
+
+                        {/* Location */}
+                        <View style={styles.sectionContainer}>
+                             <Text style={styles.sectionTitle}>Location</Text>
+                             <View style={styles.locationRow}>
+                                 <Icon name="location" size={18} color={COLORS.primary} />
+                                 <Text style={styles.locationDetailText}>
+                                     {selectedRecord.locationName || 'Location data not available'}
+                                 </Text>
+                             </View>
+                        </View>
+
+
+                    </ScrollView>
+                )}
+            </View>
         </View>
-      )}
-      
-      {!loading && error && (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Error loading history:</Text>
-          <Text style={styles.errorMessage}>{error}</Text>
-          <Text style={styles.errorHint}>
-            {error.includes('index') 
-              ? 'Please create a Firestore index or contact admin.' 
-              : 'Please try again later.'}
-          </Text>
-        </View>
-      )}
-    </View>
+      </Modal>
+
+
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  headerContainer: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    padding: 20, 
-    backgroundColor: '#fff', 
-    elevation: 2 
+  container: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
   },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#333' },
-  exportButton: { backgroundColor: '#007AFF', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20 },
-  exportText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  
-  // Filter Container
-  filterContainer: {
+  headerContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: COLORS.background,
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
-    backgroundColor: '#fff',
-    marginBottom: 10,
-    gap: 10,
+    justifyContent: 'space-between',
+    elevation: 2,
   },
-  filterButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    gap: 8,
-    justifyContent: 'space-between'
-  },
-  filterButtonText: {
-    flex: 1,
-    fontSize: 14,
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
     color: '#333',
-    fontWeight: '500',
   },
-  clearFilterButton: {
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  list: {
+    padding: 16,
+    paddingTop: 10,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 3,
+    borderLeftWidth: 4,
+    overflow: 'hidden',
+  },
+  cardContent: {
+    flexDirection: 'row',
+  },
+  dateBox: {
+    backgroundColor: '#F9FAFB',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#F3F4F6',
+    width: 70,
+  },
+  dayNum: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  monthText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  dayName: {
+    fontSize: 12,
+    color: COLORS.primary,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  infoContainer: {
+    flex: 1,
+    padding: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  cardUserName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    backgroundColor: '#F9FAFB',
     padding: 8,
+    borderRadius: 8,
   },
-
-  // Statistics Card
+  timeBlock: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  dividerVertical: {
+    width: 1,
+    height: 20,
+    backgroundColor: '#E5E7EB',
+  },
+  timeLabel: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  timeValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  timeValue: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  footerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  locationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  locationText: {
+    fontSize: 12,
+    color: '#6B7280',
+    flex: 1,
+  },
+  penaltyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  penaltyText: {
+    fontSize: 10,
+    color: '#EF4444',
+    fontWeight: 'bold',
+  },
   statsCard: {
     backgroundColor: '#fff',
-    margin: 15,
-    marginTop: 0,
-    padding: 15,
-    borderRadius: 15,
-    elevation: 3,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   statsTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
+    color: '#111827',
+    marginBottom: 12,
   },
   statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   statItem: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-    padding: 10,
-    borderRadius: 10,
-    marginHorizontal: 4,
     alignItems: 'center',
+    flex: 1,
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#28a745',
     marginBottom: 2,
   },
   statLabel: {
     fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
+    color: '#6B7280',
   },
-
-  // Chart Styles
   chartCard: {
     backgroundColor: '#fff',
-    margin: 15,
-    marginTop: 0,
-    padding: 15,
-    borderRadius: 15,
-    elevation: 3,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
   chartTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
+    color: '#111827',
+    marginBottom: 12,
   },
   chart: {
-    borderRadius: 16,
     marginVertical: 8,
+    borderRadius: 16,
   },
-
-  // Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
     maxHeight: '80%',
-    paddingBottom: 20,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
+    marginBottom: 15,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#111827',
   },
   userItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
+    justifyContent: 'space-between',
+    padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#F3F4F6',
   },
   selectedUserItem: {
-    backgroundColor: '#f0f4ff',
+    backgroundColor: '#EEF2FF',
   },
   userName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
+    color: '#111827',
   },
   userEmail: {
-    fontSize: 13,
-    color: '#666',
+    fontSize: 12,
+    color: '#6B7280',
   },
-  
-  // Date Filter Styles
   dateOptions: {
-      padding: 20,
+    gap: 8,
   },
   dateOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  selectedDateOption: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  dateOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#4B5563',
+  },
+  selectedDateOptionText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  customDateContainer: {
+    marginTop: 10,
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 12,
+  },
+  customDateLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 10,
+  },
+  dateInputRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  dateInputLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  datePickerText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  applyButton: {
+    backgroundColor: COLORS.primary,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  applyButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  errorText: { fontSize: 16, color: '#666', marginBottom: 10 },
+  errorMessage: { fontSize: 14, color: COLORS.status.offline, textAlign: 'center' },
+  detailModalContent: {
+      backgroundColor: '#fff',
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      padding: 20,
+      width: '100%',
+      maxHeight: '90%',
+      marginTop: 'auto', // Bottom Sheet style
+  },
+  closeBtn: { padding: 4 },
+  detailScroll: { paddingBottom: 20 },
+  detailHeader: { marginBottom: 20 },
+  detailDate: { fontSize: 22, fontWeight: 'bold', color: '#111827' },
+  detailGrid: {
+      flexDirection: 'row',
+      gap: 12,
+      marginBottom: 24,
+  },
+  detailItem: {
+      flex: 1,
+      backgroundColor: '#f9fafb',
+      padding: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+  },
+  detailLabel: { fontSize: 12, color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', fontWeight: 'bold' },
+  detailValue: { fontSize: 18, fontWeight: 'bold', color: '#111827' },
+  sectionContainer: { marginBottom: 24 },
+  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#374151', marginBottom: 12 },
+  breakRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      padding: 15,
-      borderRadius: 10,
-      backgroundColor: '#f8f9fa',
-      marginBottom: 10,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f3f4f6',
   },
-  selectedDateOption: {
-      backgroundColor: '#667eea',
-  },
-  dateOptionText: {
-      fontSize: 16,
-      color: '#333',
-      fontWeight: '500',
-  },
-  selectedDateOptionText: {
-      color: '#fff',
-      fontWeight: 'bold',
-  },
-  customDateContainer: {
-      marginTop: 10,
-      padding: 15,
-      backgroundColor: '#f8f9fa',
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#e9ecef',
-  },
-  customDateLabel: {
-      fontSize: 14,
-      color: '#666',
-      marginBottom: 10,
-  },
-  dateInputRow: {
+  breakTime: { fontSize: 14, color: '#4b5563' },
+  breakDuration: { fontSize: 14, fontWeight: '600', color: '#1f2937' },
+  noDataText: { color: '#9ca3af', fontStyle: 'italic' },
+  locationRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  locationDetailText: { fontSize: 14, color: '#4b5563', flex: 1, lineHeight: 20 },
+  penaltyContainer: {
       flexDirection: 'row',
-      gap: 10,
-      marginBottom: 15,
-  },
-  dateInput: {
-      flex: 1,
-      backgroundColor: '#fff',
-      borderWidth: 1,
-      borderColor: '#ddd',
-      borderRadius: 8,
-      padding: 10,
-      color: '#333',
-  },
-  applyButton: {
-      backgroundColor: '#667eea',
-      padding: 12,
-      borderRadius: 8,
       alignItems: 'center',
+      gap: 8,
+      backgroundColor: '#FEF2F2',
+      padding: 16,
+      borderRadius: 12,
+      marginBottom: 20,
   },
-  applyButtonText: {
-      color: '#fff',
-      fontWeight: 'bold',
-  },
+  penaltyDetailText: { color: '#B91C1C', flex: 1, fontSize: 13, lineHeight: 18 },
+  emptyText: { textAlign: 'center', color: '#666', marginTop: 20 },
 
-  // Existing styles
-  list: { padding: 20 },
-  card: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
-    elevation: 2,
+  // Search & Filter Section
+  filterSection: { padding: 16, backgroundColor: '#fff', paddingTop: 0 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
+  searchContainer: { 
+      flex: 1, 
+      flexDirection: 'row', 
+      alignItems: 'center', 
+      backgroundColor: '#f3f4f6', 
+      borderRadius: 12, 
+      paddingHorizontal: 12,
+      height: 48,
   },
-  row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
-  name: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  status: { fontSize: 14, color: 'green', fontWeight: 'bold' },
-  location: { fontSize: 14, color: '#666', marginBottom: 5 },
-  time: { fontSize: 12, color: '#999' },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888' },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
+  searchInput: { flex: 1, height: '100%', color: '#111827', fontSize: 14 },
+  sortButton: { 
+      flexDirection: 'row', 
+      alignItems: 'center', 
+      gap: 6, 
+      backgroundColor: '#f3f4f6', 
+      paddingHorizontal: 12, 
+      height: 48, 
+      borderRadius: 12 
   },
-  errorContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    padding: 20 
+  sortText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  filterChipsContainer: { gap: 8, paddingBottom: 4 },
+  filterChip: { 
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 14, 
+      paddingVertical: 10, 
+      borderRadius: 24, 
+      backgroundColor: '#f3f4f6', 
+      marginRight: 8,
+      borderWidth: 1,
+      borderColor: 'transparent',
   },
-  errorText: { 
-    fontSize: 18, 
-    fontWeight: 'bold', 
-    color: '#d32f2f', 
-    marginBottom: 10 
+  activeFilterChip: { backgroundColor: COLORS.primary },
+  filterChipText: { fontSize: 13, color: '#4b5563', fontWeight: '500' },
+  activeFilterChipText: { color: '#fff', fontWeight: '600' },
+  activeFiltersRow: { paddingHorizontal: 16, marginBottom: 16 },
+  activeFilterBadge: { 
+      alignSelf: 'flex-start', 
+      flexDirection: 'row', 
+      alignItems: 'center', 
+      gap: 8, 
+      backgroundColor: '#EFF6FF', 
+      paddingHorizontal: 12, 
+      paddingVertical: 6, 
+      borderRadius: 8, 
+      borderWidth: 1, 
+      borderColor: '#BFDBFE' 
   },
-  errorMessage: { 
-    fontSize: 14, 
-    color: '#666', 
-    textAlign: 'center', 
-    marginBottom: 10 
+  activeFilterText: { fontSize: 12, color: COLORS.primary, fontWeight: '600' },
+
+  filterRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  iconSortButton: { 
+      padding: 10, 
+      backgroundColor: '#f3f4f6', 
+      borderRadius: 12,
+      marginRight: 10,
   },
-  errorHint: { 
-    fontSize: 12, 
-    color: '#999', 
-    textAlign: 'center', 
-    fontStyle: 'italic' 
+  verticalDivider: {
+      width: 1,
+      height: 24,
+      backgroundColor: '#e5e7eb',
+      marginRight: 10,
+  },
+  
+  // Empty State
+  emptyContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 60,
+  },
+  emptyTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: '#374151',
+      marginTop: 16,
+  },
+  emptySubtitle: {
+      fontSize: 14,
+      color: '#9CA3AF',
+      marginTop: 8,
+      textAlign: 'center',
+      paddingHorizontal: 40,
+  },
+  // User Selection Modal Styles
+  userOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 14,
+      backgroundColor: '#F9FAFB',
+      borderRadius: 12,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+  },
+  selectedUserOption: {
+      backgroundColor: COLORS.primary,
+      borderColor: COLORS.primary,
+  },
+  userAvatar: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: '#E0E7FF',
+      alignItems: 'center',
+      justifyContent: 'center',
+  },
+  userAvatarText: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: COLORS.primary,
+  },
+  userOptionText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: COLORS.text.primary,
+  },
+  userOptionEmail: {
+      fontSize: 12,
+      color: COLORS.text.secondary,
+      marginTop: 2,
   },
 });

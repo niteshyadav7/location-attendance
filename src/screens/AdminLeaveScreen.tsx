@@ -1,51 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { getFirestore, collection, query, where, onSnapshot, updateDoc, doc, orderBy } from '@react-native-firebase/firestore';
 import { LeaveRequest } from '../types';
 import { format } from 'date-fns';
+import { useAdminLeaves } from '../hooks/useLeaves';
+import { COLORS } from '../constants/theme';
+import { useAds } from '../hooks/useAds';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 
 type TabType = 'PENDING' | 'APPROVED';
 
 export const AdminLeaveScreen = () => {
-  const [pendingRequests, setPendingRequests] = useState<LeaveRequest[]>([]);
-  const [approvedRequests, setApprovedRequests] = useState<LeaveRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { pendingLeaves, approvedLeaves, loading, updateLeaveStatus } = useAdminLeaves();
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('adminLeaves');
   const [activeTab, setActiveTab] = useState<TabType>('PENDING');
-
-  useEffect(() => {
-    const db = getFirestore();
-    
-    // Query for pending leaves
-    const pendingQuery = query(collection(db, 'leaves'), where('status', '==', 'PENDING'));
-    
-    // Query for approved leaves
-    const approvedQuery = query(collection(db, 'leaves'), where('status', '==', 'APPROVED'));
-
-    const unsubscribePending = onSnapshot(pendingQuery, (snapshot) => {
-      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LeaveRequest));
-      // Sort by oldest first
-      data.sort((a: LeaveRequest, b: LeaveRequest) => a.requestDate - b.requestDate);
-      setPendingRequests(data);
-      setLoading(false);
-    });
-
-    const unsubscribeApproved = onSnapshot(approvedQuery, (snapshot) => {
-      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LeaveRequest));
-      // Sort by newest first for approved
-      data.sort((a: LeaveRequest, b: LeaveRequest) => b.requestDate - a.requestDate);
-      setApprovedRequests(data);
-    });
-
-    return () => {
-      unsubscribePending();
-      unsubscribeApproved();
-    };
-  }, []);
 
   const handleAction = async (id: string, status: 'APPROVED' | 'REJECTED') => {
     try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'leaves', id), { status });
+      await updateLeaveStatus(id, status);
       Alert.alert('Success', `Leave request ${status.toLowerCase()}.`);
     } catch (error: any) {
       Alert.alert('Error', error.message);
@@ -103,7 +75,7 @@ export const AdminLeaveScreen = () => {
     </View>
   );
 
-  const currentData = activeTab === 'PENDING' ? pendingRequests : approvedRequests;
+  const currentData = activeTab === 'PENDING' ? pendingLeaves : approvedLeaves;
   const renderItem = activeTab === 'PENDING' ? renderPendingItem : renderApprovedItem;
 
   return (
@@ -115,7 +87,7 @@ export const AdminLeaveScreen = () => {
           onPress={() => setActiveTab('PENDING')}
         >
           <Text style={[styles.tabText, activeTab === 'PENDING' && styles.activeTabText]}>
-            Pending ({pendingRequests.length})
+            Pending ({pendingLeaves.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity 
@@ -123,14 +95,25 @@ export const AdminLeaveScreen = () => {
           onPress={() => setActiveTab('APPROVED')}
         >
           <Text style={[styles.tabText, activeTab === 'APPROVED' && styles.activeTabText]}>
-            Approved ({approvedRequests.length})
+            Approved ({approvedLeaves.length})
           </Text>
         </TouchableOpacity>
       </View>
 
       {/* Content */}
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background, paddingVertical: 10 }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
       {loading ? (
-        <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+        <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
       ) : (
         <FlatList
           data={currentData}
@@ -152,10 +135,10 @@ export const AdminLeaveScreen = () => {
 
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: COLORS.background },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
@@ -167,19 +150,19 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomColor: '#007AFF',
+    borderBottomColor: COLORS.primary,
   },
   tabText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#888',
+    color: COLORS.text.secondary,
   },
   activeTabText: {
-    color: '#007AFF',
+    color: COLORS.primary,
   },
   list: { padding: 20 },
   card: { 
-    backgroundColor: '#fff', 
+    backgroundColor: COLORS.white, 
     padding: 15, 
     borderRadius: 10, 
     marginBottom: 15, 
@@ -191,33 +174,33 @@ const styles = StyleSheet.create({
   },
   approvedCard: {
     borderLeftWidth: 4,
-    borderLeftColor: '#4CD964',
+    borderLeftColor: COLORS.status.working, // Green
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10, alignItems: 'center' },
-  name: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  date: { fontSize: 12, color: '#999' },
+  name: { fontSize: 18, fontWeight: 'bold', color: COLORS.text.primary },
+  date: { fontSize: 12, color: COLORS.text.light },
   approvedBadge: {
-    backgroundColor: '#e8f5e9',
+    backgroundColor: COLORS.status.working + '20', // Opacity
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   approvedBadgeText: {
-    color: '#4CD964',
+    color: COLORS.status.working,
     fontSize: 12,
     fontWeight: 'bold',
   },
-  period: { fontSize: 16, fontWeight: '600', color: '#007AFF', marginBottom: 5 },
+  period: { fontSize: 16, fontWeight: '600', color: COLORS.primary, marginBottom: 5 },
   reason: { fontSize: 14, color: '#555', fontStyle: 'italic', marginBottom: 15 },
   requestedDate: {
     fontSize: 12,
-    color: '#999',
+    color: COLORS.text.light,
     marginTop: 5,
   },
   actions: { flexDirection: 'row', gap: 10 },
   button: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
-  approveButton: { backgroundColor: '#4CD964' },
-  rejectButton: { backgroundColor: '#FF3B30' },
-  buttonText: { color: '#fff', fontWeight: 'bold' },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888', fontSize: 16 },
+  approveButton: { backgroundColor: COLORS.status.working },
+  rejectButton: { backgroundColor: COLORS.status.offline },
+  buttonText: { color: COLORS.white, fontWeight: 'bold' },
+  emptyText: { textAlign: 'center', marginTop: 50, color: COLORS.text.secondary, fontSize: 16 },
 });

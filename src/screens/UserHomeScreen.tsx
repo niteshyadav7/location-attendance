@@ -1,135 +1,89 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Dimensions, SafeAreaView } from 'react-native';
-import { getFirestore, doc, onSnapshot, collection, addDoc, query, where, limit, updateDoc, orderBy } from '@react-native-firebase/firestore';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { getFirestore, doc, onSnapshot } from '@react-native-firebase/firestore';
+import Icon from 'react-native-vector-icons/Ionicons';
+import { format } from 'date-fns';
+import { useLocationDetails } from '../hooks/useLocations';
 import { useAuthStore } from '../store/useAuthStore';
 import { getCurrentLocation, calculateDistance, requestLocationPermission } from '../services/location';
-import { LocationConfig, AttendanceRecord, BreakSession, Notice } from '../types';
+import { LocationConfig, Notice } from '../types';
 import { NoticeModal } from '../components/NoticeModal';
 import { notificationService } from '../services/notificationService';
+import { useAttendance } from '../hooks/useAttendance';
+import { useNotices } from '../hooks/useLeaves';
+import { COLORS } from '../constants/theme';
+import LinearGradient from 'react-native-linear-gradient';
+
+
+import { ScreenAdBanner, ScreenAdNative, useScreenInterstitial } from '../components/ScreenAds';
+import { useAds } from '../hooks/useAds';
+import { useSmartInterstitial } from '../hooks/useSmartInterstitial';
 
 export const UserHomeScreen = () => {
   const user = useAuthStore((state) => state.user);
-  const [assignedLocation, setAssignedLocation] = useState<LocationConfig | null>(null);
+  const organization = useAuthStore((state) => state.organization);
+  const [userData, setUserData] = useState(user); // Local state for real-time updates
+  const { location: assignedLocation } = useLocationDetails(user?.assignedLocationId);
+  
+  // Triggers interstitial on mount if enabled for 'home'
+  useScreenInterstitial('home');
+  
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
   const [checkingLocation, setCheckingLocation] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
 
-  // Attendance State
-  const [attendanceDocId, setAttendanceDocId] = useState<string | null>(null);
-  const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(null);
-
-  // Notice State
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const { notices } = useNotices();
   const [currentNotice, setCurrentNotice] = useState<Notice | null>(null);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
 
-  const db = getFirestore();
+  
+  const { 
+    attendanceRecord, 
+    loading, 
+    handleCheckIn, 
+    handleTakeBreak, 
+    handleResumeWork, 
+    handleCheckOut 
+  } = useAttendance(userData, assignedLocation, organization);
+
+  const { showAdIfEnabled } = useSmartInterstitial();
+
+  const onCheckInPress = async () => {
+    await handleCheckIn();
+    showAdIfEnabled('onCheckIn');
+  };
+
+  const onCheckOutPress = async () => {
+    await handleCheckOut();
+    showAdIfEnabled('onCheckOut');
+  };
+
+
+
 
   // 1. Request Permissions
   useEffect(() => {
-    // Initialize notifications
     notificationService.initialize();
-    
     requestLocationPermission().then(granted => {
       setHasPermission(granted);
       if (!granted) Alert.alert('Permission Required', 'Location permission is required.');
     });
   }, []);
 
-  // 2. Fetch Assigned Location
+  // Notice Effect
   useEffect(() => {
-    if (!user?.assignedLocationId) return;
-    const unsubscribe = onSnapshot(doc(db, 'locations', user.assignedLocationId), (docSnapshot) => {
-      if (docSnapshot.exists()) {
-        setAssignedLocation({ id: docSnapshot.id, ...docSnapshot.data() } as LocationConfig);
-      }
-    });
-    return () => unsubscribe();
-  }, [user?.assignedLocationId]);
+    if (notices.length > 0 && !currentNotice) {
+      const urgentNotice = notices.find(n => n.priority === 'urgent' || n.priority === 'high');
+      setCurrentNotice(urgentNotice || notices[0]);
+      setShowNoticeModal(true);
+    }
+  }, [notices]);
 
-  // 3. Listen to Today's Attendance
-  useEffect(() => {
-    if (!user?.uid) return;
-    const today = new Date().toISOString().split('T')[0];
-    
-    const q = query(
-      collection(db, 'attendance'),
-      where('userId', '==', user.uid),
-      where('date', '==', today),
-      limit(1)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        const docSnap = snapshot.docs[0];
-        setAttendanceDocId(docSnap.id);
-        setAttendanceRecord(docSnap.data() as AttendanceRecord);
-      } else {
-        setAttendanceDocId(null);
-        setAttendanceRecord(null);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [user?.uid]);
-
-  // 4. Fetch Active Notices
-  useEffect(() => {
-    // Simplified query - no orderBy to avoid composite index requirement
-    const q = query(
-      collection(db, 'notices'),
-      where('isActive', '==', true)
-    );
-
-    const unsubscribe = onSnapshot(
-      q, 
-      (snapshot) => {
-        if (!snapshot) {
-          console.log('No snapshot received');
-          return;
-        }
-
-        const noticeList: Notice[] = [];
-        snapshot.forEach((doc: any) => {
-          const notice = { id: doc.id, ...doc.data() } as Notice;
-          // Check if notice is not expired
-          if (!notice.expiresAt || notice.expiresAt > Date.now()) {
-            noticeList.push(notice);
-          }
-        });
-
-        // Sort by createdAt in the app (newest first)
-        noticeList.sort((a, b) => b.createdAt - a.createdAt);
-        
-        setNotices(noticeList);
-        
-        // Show the latest urgent/high priority notice only once
-        if (noticeList.length > 0 && !currentNotice) {
-          const urgentNotice = noticeList.find(n => n.priority === 'urgent' || n.priority === 'high');
-          if (urgentNotice) {
-            setCurrentNotice(urgentNotice);
-            setShowNoticeModal(true);
-          } else {
-            setCurrentNotice(noticeList[0]);
-            setShowNoticeModal(true);
-          }
-        }
-      },
-      (error) => {
-        console.error('Error fetching notices:', error);
-        // Don't show error to user, just log it
-      }
-    );
-
-    return () => unsubscribe();
-  }, []);
-
-  // 5. Periodic Location Check (just for distance display)
+  // 4. Periodic Location Check (for distance display only)
   useEffect(() => {
     if (!assignedLocation) return;
-
     const locationInterval = setInterval(async () => {
       try {
         const pos = await getCurrentLocation();
@@ -144,7 +98,7 @@ export const UserHomeScreen = () => {
       } catch (err) {
         console.log("Location check failed", err);
       }
-    }, 10000); // Check every 10 seconds
+    }, 10000); 
 
     return () => clearInterval(locationInterval);
   }, [assignedLocation]);
@@ -165,265 +119,15 @@ export const UserHomeScreen = () => {
     }
   };
 
-  // --- ACTIONS ---
-
-  const handleCheckIn = async () => {
-    if (!user || !assignedLocation) return;
-    
-    setLoading(true);
-    try {
-        const pos = await getCurrentLocation();
-        const dist = calculateDistance(
-            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-            { latitude: assignedLocation.latitude, longitude: assignedLocation.longitude }
-        );
-
-        if (dist > assignedLocation.radius) {
-            Alert.alert('Out of Range', `You are ${Math.round(dist)}m away. Must be within ${assignedLocation.radius}m.`);
-            setLoading(false);
-            return;
-        }
-
-        const today = new Date().toISOString().split('T')[0];
-        await addDoc(collection(db, 'attendance'), {
-            userId: user.uid,
-            userName: user.name,
-            locationId: assignedLocation.id,
-            locationName: assignedLocation.name,
-            date: today,
-            checkInTime: Date.now(),
-            breaks: [],
-            status: 'PRESENT',
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-        });
-        
-        // Send Notification
-        addDoc(collection(db, 'notifications'), {
-            type: 'CHECK_IN',
-            userId: user.uid,
-            userName: user.name,
-            message: `${user.name} checked in at ${assignedLocation.name}`,
-            timestamp: Date.now(),
-            read: false
-        });
-
-        // Update User Status
-        updateDoc(doc(db, 'users', user.uid), {
-            currentStatus: 'WORKING',
-            lastActive: Date.now()
-        });
-
-        // Show local notification
-        const checkInTime = new Date().toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        await notificationService.showCheckInNotification(
-          user.name,
-          assignedLocation.name,
-          checkInTime
-        );
-
-        Alert.alert('✅ Success', 'Checked In Successfully!');
-    } catch (error: any) {
-        Alert.alert('Error', error.message);
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  const handleTakeBreak = async () => {
-    if (!attendanceDocId || !user) return;
-    setLoading(true);
-    try {
-        const newBreak: BreakSession = { 
-            startTime: Date.now()
-        };
-        await updateDoc(doc(db, 'attendance', attendanceDocId), {
-            status: 'ON_BREAK',
-            breaks: [...(attendanceRecord?.breaks || []), newBreak]
-        });
-        
-        // Send Notification
-        addDoc(collection(db, 'notifications'), {
-            type: 'BREAK_START',
-            userId: user.uid,
-            userName: user.name,
-            message: `${user.name} started a break`,
-            timestamp: Date.now(),
-            read: false
-        });
-
-        // Update User Status
-        updateDoc(doc(db, 'users', user.uid), {
-            currentStatus: 'ON_BREAK',
-            lastActive: Date.now()
-        });
-
-        // Show local notification
-        const breakTime = new Date().toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        await notificationService.showBreakStartNotification(user.name, breakTime);
-
-        Alert.alert('☕ Break Started', 'Enjoy your break!');
-    } catch (error: any) {
-        Alert.alert('Error', error.message);
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  const handleResumeWork = async () => {
-    if (!attendanceDocId || !attendanceRecord || !user) return;
-    setLoading(true);
-    try {
-        const pos = await getCurrentLocation();
-        const dist = calculateDistance(
-            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-            { latitude: assignedLocation!.latitude, longitude: assignedLocation!.longitude }
-        );
-        
-        if (dist > assignedLocation!.radius) {
-             Alert.alert('Out of Range', 'You must be at the location to resume work.');
-             setLoading(false);
-             return;
-        }
-
-        const breaks = [...attendanceRecord.breaks];
-        if (breaks.length > 0) {
-            breaks[breaks.length - 1].endTime = Date.now();
-        }
-
-        await updateDoc(doc(db, 'attendance', attendanceDocId), {
-            status: 'PRESENT',
-            breaks: breaks
-        });
-
-        // Send Notification
-        addDoc(collection(db, 'notifications'), {
-            type: 'BREAK_END',
-            userId: user.uid,
-            userName: user.name,
-            message: `${user.name} resumed work`,
-            timestamp: Date.now(),
-            read: false
-        });
-
-        // Update User Status
-        updateDoc(doc(db, 'users', user.uid), {
-            currentStatus: 'WORKING',
-            lastActive: Date.now()
-        });
-
-        // Show local notification
-        const resumeTime = new Date().toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        
-        // Calculate break duration
-        const lastBreak = breaks[breaks.length - 1];
-        const breakDuration = Math.round((lastBreak.endTime! - lastBreak.startTime) / 60000); // in minutes
-        const breakDurationStr = breakDuration < 60 
-          ? `${breakDuration} min` 
-          : `${Math.floor(breakDuration / 60)}h ${breakDuration % 60}m`;
-        
-        await notificationService.showBreakEndNotification(user.name, breakDurationStr, resumeTime);
-
-        Alert.alert('💼 Resumed', 'Welcome back!');
-    } catch (error: any) {
-        Alert.alert('Error', error.message);
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  const handleCheckOut = async () => {
-    if (!attendanceDocId || !attendanceRecord || !user || !assignedLocation) return;
-    
-    setLoading(true);
-    
-    try {
-        // Check if user is within radius before allowing checkout
-        const pos = await getCurrentLocation();
-        const dist = calculateDistance(
-            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-            { latitude: assignedLocation.latitude, longitude: assignedLocation.longitude }
-        );
-        
-        if (dist > assignedLocation.radius) {
-            Alert.alert('Out of Range', `You are ${Math.round(dist)}m away. Must be within ${assignedLocation.radius}m to checkout.`);
-            setLoading(false);
-            return;
-        }
-
-        let breaks = [...attendanceRecord.breaks];
-        if (attendanceRecord.status === 'ON_BREAK' && breaks.length > 0) {
-            breaks[breaks.length - 1].endTime = Date.now();
-        }
-
-        await updateDoc(doc(db, 'attendance', attendanceDocId), {
-            status: 'CHECKED_OUT',
-            checkOutTime: Date.now(),
-            breaks: breaks
-        });
-        
-        // Send Notification
-        addDoc(collection(db, 'notifications'), {
-            type: 'CHECK_OUT',
-            userId: user.uid,
-            userName: user.name,
-            message: `${user.name} checked out`,
-            timestamp: Date.now(),
-            read: false
-        });
-
-        // Update User Status
-        updateDoc(doc(db, 'users', user.uid), {
-            currentStatus: 'CHECKED_OUT',
-            lastActive: Date.now()
-        });
-
-        // Show local notification
-        const checkOutTime = new Date().toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        
-        // Calculate total hours worked
-        const totalMinutes = Math.round((Date.now() - attendanceRecord.checkInTime) / 60000);
-        const totalHours = Math.floor(totalMinutes / 60);
-        const remainingMinutes = totalMinutes % 60;
-        const totalHoursStr = `${totalHours}h ${remainingMinutes}m`;
-        
-        await notificationService.showCheckOutNotification(user.name, totalHoursStr, checkOutTime);
-
-        Alert.alert('👋 Success', 'Checked Out Successfully!');
-    } catch (error: any) {
-        console.error("Check out error", error);
-        Alert.alert('Error', error.message);
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  // Get status badge
   const getStatusBadge = () => {
     if (!attendanceRecord) {
       return { text: 'Not Started', color: '#95A5A6', emoji: '⏸️' };
     }
     switch (attendanceRecord.status) {
-      case 'PRESENT':
-        return { text: 'Working', color: '#27AE60', emoji: '💼' };
-      case 'ON_BREAK':
-        return { text: 'On Break', color: '#F39C12', emoji: '☕' };
-      case 'CHECKED_OUT':
-        return { text: 'Checked Out', color: '#E74C3C', emoji: '✅' };
-      default:
-        return { text: 'Unknown', color: '#95A5A6', emoji: '❓' };
+      case 'PRESENT': return { text: 'Working', color: COLORS.status.working, emoji: '💼' };
+      case 'ON_BREAK': return { text: 'On Break', color: COLORS.status.onBreak, emoji: '☕' };
+      case 'CHECKED_OUT': return { text: 'Checked Out', color: COLORS.status.checkedOut, emoji: '✅' };
+      default: return { text: 'Unknown', color: '#95A5A6', emoji: '❓' };
     }
   };
 
@@ -440,38 +144,151 @@ export const UserHomeScreen = () => {
     );
   }
 
+
+
+  // Listen to User Data (for real-time missedCheckouts updates)
+  useEffect(() => {
+    if (!user?.uid) return;
+    const db = getFirestore();
+    const unsub = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        setUserData(docSnap.data() as any);
+      }
+    });
+    return () => unsub();
+  }, [user?.uid]);
+
+  // Auto-Checkout Warning Logic
+  const [showAutoCheckoutWarning, setShowAutoCheckoutWarning] = useState(false);
+
+  useEffect(() => {
+      if (userData && (userData as any).lastAutoCheckoutTime) {
+          const lastTime = (userData as any).lastAutoCheckoutTime;
+          const diff = Date.now() - lastTime;
+          // Show if happened within last 24 hours
+          if (diff < 24 * 60 * 60 * 1000) {
+              setShowAutoCheckoutWarning(true);
+          } else {
+              setShowAutoCheckoutWarning(false);
+          }
+      }
+  }, [userData]); 
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        <ScreenAdBanner screen="home" />
+      </View>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.greeting}>Hello, {user?.name}! 👋</Text>
-          <Text style={styles.subtitle}>Track your attendance</Text>
-        </View>
-
-        {/* Status Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusHeader}>
-            <View>
-              <Text style={styles.locationLabel}>📍 Location</Text>
-              <Text style={styles.locationName}>{assignedLocation?.name || 'Loading...'}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusBadge.color }]}>
-              <Text style={styles.statusEmoji}>{statusBadge.emoji}</Text>
-              <Text style={styles.statusText}>{statusBadge.text}</Text>
-            </View>
+          <View>
+            <Text style={styles.greetingLabel}>Hello,</Text>
+            <Text style={styles.greetingName}>{user?.name} 👋</Text>
           </View>
           
-          {distance !== null && (
-            <View style={styles.distanceContainer}>
-              <Text style={styles.distanceLabel}>Current Distance</Text>
-              <Text style={styles.distanceValue}>{Math.round(distance)}m</Text>
-              <TouchableOpacity onPress={refreshLocation} style={styles.refreshButton} disabled={checkingLocation}>
-                <Text style={styles.refreshText}>{checkingLocation ? '🔄 Updating...' : '🔄 Refresh GPS'}</Text>
-              </TouchableOpacity>
+          <LinearGradient 
+             colors={[COLORS.primary, '#818cf8']}
+             start={{x: 0, y: 0}} 
+             end={{x: 1, y: 0}}
+             style={styles.subtitleBadge}
+          >
+             <Icon name="calendar" size={14} color="#fff" />
+             <Text style={styles.subtitleText}>Track your attendance</Text>
+          </LinearGradient>
+        </View>
+
+        {/* Penalty Stats Row */}
+        {(userData?.missedCheckouts || 0) > 0 && (
+            <View style={styles.statsRow}>
+                <View style={styles.statBadge}>
+                    <Text style={styles.statLabel}>Missed Checkouts:</Text>
+                    <Text style={styles.statValue}>{userData?.missedCheckouts}</Text>
+                </View>
+                <Text style={styles.penaltyText}>Total Penalty: {(userData?.missedCheckouts || 0) * 5} hrs</Text>
             </View>
-          )}
+        )}
+
+        {/* Today's Penalty Warning (Specific Event) */}
+        {showAutoCheckoutWarning && (
+            <View style={styles.penaltyCard}>
+                <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'flex-start'}}>
+                    <Text style={styles.penaltyTitle}>⚠️ Auto-Checkout Alert</Text>
+                    <TouchableOpacity onPress={() => setShowAutoCheckoutWarning(false)}>
+                        <Icon name="close" size={20} color="#B91C1C" />
+                    </TouchableOpacity>
+                </View>
+                <Text style={styles.penaltyMsg}>
+                    You were automatically checked out by the system. 
+                    If you worked past your assigned checkout time, a <Text style={{fontWeight:'bold'}}>1 Hour Penalty</Text> may have been applied.
+                </Text>
+            </View>
+        )}
+
+        {/* Professional Status Card */}
+        {/* Professional Status Card */}
+        <View style={styles.proStatusCard}>
+            {/* Top Row: Location */}
+            <View style={styles.cardHeaderRow}>
+                <View style={styles.locationInfo}>
+                    <View style={styles.iconBox}>
+                         <Icon name="business" size={24} color={COLORS.primary} />
+                    </View>
+                    <View>
+                        <Text style={styles.cardLabel}>Current Location</Text>
+                        <Text style={styles.proLocationName}>{assignedLocation?.name || 'Loading...'}</Text>
+                    </View>
+                </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Middle Row: Status & Distance Grid */}
+            <View style={styles.cardBodyRow}>
+                {/* Status Column */}
+                <View style={styles.infoColumn}>
+                     <Text style={styles.cardLabel}>My Status</Text>
+                     <View style={[styles.proStatusBadge, { backgroundColor: statusBadge.color + '10', borderColor: statusBadge.color + '30' }]}>
+                        <View style={[styles.statusDot, { backgroundColor: statusBadge.color }]} />
+                        <Text style={[styles.proStatusText, { color: statusBadge.color }]}>{statusBadge.text}</Text>
+                     </View>
+                </View>
+                
+                {/* Distance Column */}
+                {distance !== null && (
+                    <View style={styles.infoColumn}>
+                        <Text style={styles.cardLabel}>Distance</Text>
+                        <View style={styles.distanceRow}>
+                            <Icon 
+                                name={distance < 100 ? "checkmark-circle" : "warning"} 
+                                size={16} 
+                                color={distance < 100 ? COLORS.status.working : COLORS.status.offline} 
+                            />
+                            <Text style={[styles.proDistanceValue, { color: distance < 100 ? '#374151' : COLORS.status.offline }]}>
+                                {Math.round(distance)}m
+                            </Text>
+                        </View>
+                    </View>
+                )}
+            </View>
+
+            {/* Bottom: Refresh Action */}
+            <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={refreshLocation} 
+                style={styles.proRefreshButton} 
+                disabled={checkingLocation}
+            >
+                {checkingLocation ? (
+                    <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                    <Icon name="locate" size={16} color={COLORS.primary} />
+                )}
+                <Text style={styles.proRefreshText}>
+                    {checkingLocation ? 'Updating Coordinates...' : 'Refresh GPS Location'}
+                </Text>
+            </TouchableOpacity>
         </View>
 
         {/* Action Buttons */}
@@ -479,7 +296,7 @@ export const UserHomeScreen = () => {
           {!attendanceRecord && (
             <TouchableOpacity 
               style={[styles.actionButton, styles.checkInButton]} 
-              onPress={handleCheckIn} 
+              onPress={onCheckInPress} 
               disabled={loading}
               activeOpacity={0.8}
             >
@@ -502,7 +319,7 @@ export const UserHomeScreen = () => {
               
               <TouchableOpacity 
                 style={[styles.actionButton, styles.checkOutButton]} 
-                onPress={handleCheckOut} 
+                onPress={onCheckOutPress} 
                 disabled={loading}
                 activeOpacity={0.8}
               >
@@ -554,59 +371,58 @@ export const UserHomeScreen = () => {
 
         {loading && (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#007AFF" />
+            <ActivityIndicator size="large" color={COLORS.primary} />
             <Text style={styles.loadingText}>Processing...</Text>
           </View>
         )}
 
+
+
+
+        {/* Granular Native Ad */}
+        <ScreenAdNative screen="home" />
+
       </ScrollView>
 
-      {/* Notice Modal */}
       <NoticeModal
         notice={currentNotice}
         visible={showNoticeModal}
         onClose={() => setShowNoticeModal(false)}
       />
+      
+
     </SafeAreaView>
   );
 };
 
-// Get screen dimensions
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Responsive scaling functions
-const scale = (size: number) => (SCREEN_WIDTH / 375) * size;
-const verticalScale = (size: number) => (SCREEN_HEIGHT / 812) * size;
-const moderateScale = (size: number, factor = 0.5) => size + (scale(size) - size) * factor;
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.background,
   },
   container: {
     flexGrow: 1,
-    padding: moderateScale(20),
-    paddingBottom: verticalScale(30),
+    padding: 20,
+    paddingBottom: 100, // Extra padding for bottom tab bar
   },
   header: {
-    marginBottom: verticalScale(24),
+    marginBottom: 24,
   },
   greeting: {
-    fontSize: moderateScale(28),
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#1A1A1A',
-    marginBottom: verticalScale(4),
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: moderateScale(16),
+    fontSize: 16,
     color: '#6B7280',
   },
   statusCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: moderateScale(20),
-    padding: moderateScale(20),
-    marginBottom: verticalScale(20),
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -617,74 +433,74 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: verticalScale(16),
+    marginBottom: 16,
   },
   locationLabel: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     color: '#6B7280',
-    marginBottom: verticalScale(4),
+    marginBottom: 4,
   },
   locationName: {
-    fontSize: moderateScale(20),
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#1A1A1A',
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: moderateScale(12),
-    paddingVertical: verticalScale(6),
-    borderRadius: moderateScale(20),
-    gap: moderateScale(6),
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
   },
   statusEmoji: {
-    fontSize: moderateScale(16),
+    fontSize: 16,
   },
   statusText: {
     color: '#FFFFFF',
-    fontSize: moderateScale(13),
+    fontSize: 13,
     fontWeight: '600',
   },
   distanceContainer: {
     backgroundColor: '#F8F9FA',
-    borderRadius: moderateScale(12),
-    padding: moderateScale(16),
+    borderRadius: 12,
+    padding: 16,
     alignItems: 'center',
   },
   distanceLabel: {
-    fontSize: moderateScale(13),
+    fontSize: 13,
     color: '#6B7280',
-    marginBottom: verticalScale(4),
+    marginBottom: 4,
   },
   distanceValue: {
-    fontSize: moderateScale(32),
+    fontSize: 32,
     fontWeight: 'bold',
     color: '#007AFF',
-    marginBottom: verticalScale(8),
+    marginBottom: 8,
   },
   refreshButton: {
-    marginTop: verticalScale(8),
+    marginTop: 8,
   },
   refreshText: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     color: '#007AFF',
     fontWeight: '600',
   },
   actionsContainer: {
-    gap: verticalScale(12),
+    gap: 12,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: verticalScale(16),
-    borderRadius: moderateScale(16),
+    paddingVertical: 16,
+    borderRadius: 16,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
-    gap: moderateScale(10),
+    gap: 10,
   },
   checkInButton: {
     backgroundColor: '#007AFF',
@@ -699,17 +515,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#27AE60',
   },
   actionButtonIcon: {
-    fontSize: moderateScale(24),
+    fontSize: 24,
   },
   actionButtonText: {
     color: '#FFFFFF',
-    fontSize: moderateScale(18),
+    fontSize: 18,
     fontWeight: 'bold',
   },
   completedCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: moderateScale(20),
-    padding: moderateScale(32),
+    borderRadius: 20,
+    padding: 32,
     alignItems: 'center',
     elevation: 2,
     shadowColor: '#000',
@@ -718,73 +534,280 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   completedEmoji: {
-    fontSize: moderateScale(48),
-    marginBottom: verticalScale(12),
+    fontSize: 48,
+    marginBottom: 12,
   },
   completedText: {
-    fontSize: moderateScale(20),
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#27AE60',
-    marginBottom: verticalScale(4),
+    marginBottom: 4,
   },
   completedSubtext: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     color: '#6B7280',
   },
   loadingContainer: {
-    marginTop: verticalScale(20),
+    marginTop: 20,
     alignItems: 'center',
-    gap: verticalScale(8),
+    gap: 8,
   },
   loadingText: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     color: '#6B7280',
   },
   errorMessage: {
-    fontSize: moderateScale(20),
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#E74C3C',
     textAlign: 'center',
-    marginTop: verticalScale(100),
+    marginTop: 100,
   },
   errorSubtext: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     color: '#6B7280',
     textAlign: 'center',
-    marginTop: verticalScale(8),
+    marginTop: 8,
   },
   noticeBoardButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: moderateScale(16),
-    padding: moderateScale(16),
-    marginTop: verticalScale(20),
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 20,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    gap: moderateScale(12),
+    gap: 12,
   },
   noticeBoardIcon: {
-    fontSize: moderateScale(28),
+    fontSize: 28,
   },
   noticeBoardContent: {
     flex: 1,
   },
   noticeBoardTitle: {
-    fontSize: moderateScale(16),
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#1A1A1A',
-    marginBottom: verticalScale(2),
+    marginBottom: 2,
   },
   noticeBoardSubtitle: {
-    fontSize: moderateScale(13),
+    fontSize: 13,
     color: '#6B7280',
   },
   noticeBoardArrow: {
-    fontSize: moderateScale(24),
+    fontSize: 24,
     color: '#9CA3AF',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    backgroundColor: '#FEE2E2',
+    padding: 12,
+    borderRadius: 12,
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+  },
+  statBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#B91C1C',
+    fontWeight: '600',
+  },
+  statValue: {
+    fontSize: 16,
+    color: '#B91C1C',
+    fontWeight: 'bold',
+  },
+  penaltyText: {
+    fontSize: 12,
+    color: '#EF4444',
+    fontWeight: '600',
+  },
+  penaltyCard: {
+    backgroundColor: '#FEF2F2',
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  penaltyTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#B91C1C',
+    marginBottom: 4,
+  },
+  penaltyMsg: {
+    fontSize: 14,
+    color: '#7F1D1D',
+  },
+
+  // Professional Status Card Styles
+  proStatusCard: {
+      backgroundColor: '#fff',
+      borderRadius: 24,
+      padding: 20,
+      marginBottom: 24,
+      elevation: 6,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 12,
+      borderWidth: 1,
+      borderColor: '#f3f4f6',
+  },
+  cardHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+  },
+  locationInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flex: 1,
+  },
+  iconBox: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: '#EFF6FF',
+      justifyContent: 'center',
+      alignItems: 'center',
+  },
+  cardLabel: {
+      fontSize: 12,
+      color: '#6B7280',
+      textTransform: 'uppercase',
+      fontWeight: '600',
+      marginBottom: 2,
+  },
+  proLocationName: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: '#111827',
+  },
+  timeBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: '#F9FAFB',
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#F3F4F6',
+  },
+  liveTime: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#374151',
+  },
+  divider: {
+      height: 1,
+      backgroundColor: '#F3F4F6',
+      marginBottom: 16,
+  },
+  cardBodyRow: {
+      flexDirection: 'row',
+      gap: 16,
+      marginBottom: 16,
+  },
+  infoColumn: {
+      flex: 1,
+  },
+  proStatusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginTop: 4,
+  },
+  statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+  },
+  proStatusText: {
+      fontSize: 14,
+      fontWeight: 'bold',
+  },
+  distanceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 8,
+      backgroundColor: '#F9FAFB',
+      padding: 10,
+      borderRadius: 12,
+  },
+  proDistanceValue: {
+      fontSize: 15,
+      fontWeight: 'bold',
+  },
+  proRefreshButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 12,
+      backgroundColor: '#EFF6FF',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: '#BFDBFE',
+  },
+  proRefreshText: {
+      color: COLORS.primary,
+      fontWeight: '600',
+      fontSize: 14,
+  },
+  
+  // New Header Styles
+  greetingLabel: {
+      fontSize: 18,
+      color: COLORS.primary,
+      fontWeight: 'bold',
+      marginBottom: 4,
+  },
+  greetingName: {
+      fontSize: 32,
+      fontWeight: '800', // Extra bold
+      color: '#111827',
+      marginBottom: 12,
+      letterSpacing: -0.5,
+  },
+  subtitleBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 12,
+      alignSelf: 'flex-start',
+      gap: 8,
+      shadowColor: COLORS.primary,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 4,
+  },
+  subtitleText: {
+      color: '#fff',
+      fontWeight: '600',
+      fontSize: 14,
   },
 });

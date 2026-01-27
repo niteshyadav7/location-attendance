@@ -1,4 +1,8 @@
 {
   "name": "locationAttendance",
-  "displayName": "Location Attendance"
+  "displayName": "Location Attendance",
+  "react-native-google-mobile-ads": {
+    "android_app_id": "ca-app-pub-6814953421558759~1163304120",
+    "ios_app_id": "ca-app-pub-6814953421558759~1163304120"
+  }
 }

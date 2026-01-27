@@ -1,0 +1,191 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Admin Settings (e.g., Ads) - Allow read for everyone (Login screen needs ads), write for super admin
+    match /admin_settings/{document=**} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    
+    // Helper function to check if user is super admin
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+    
+    // Helper function to check if user is company admin
+    function isCompanyAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'company_admin';
+    }
+    
+    // Helper function to check if user is any admin
+    function isAdmin() {
+      return isSuperAdmin() || isCompanyAdmin();
+    }
+    
+    // Helper function to check if user belongs to same organization
+    function sameOrganization(orgId) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId;
+    }
+    
+    // Organizations
+    match /organizations/{orgId} {
+      // Anyone logged in can read (needed for login/signup checks)
+      allow read: if isAuthenticated();
+      
+      // FIXED: Allow authenticated users to create a new organization (for Company Signup)
+      allow create: if isAuthenticated();
+      
+      // Only Super Admin or the specific Company Admin can update/delete
+      allow update, delete: if isSuperAdmin() || (isCompanyAdmin() && resource.data.createdBy == request.auth.uid);
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Super admin can do anything
+      allow read, write: if isSuperAdmin();
+      
+      // Company admin can read/write users in their organization
+      allow read, write: if isCompanyAdmin() && 
+                           sameOrganization(resource.data.organizationId);
+      
+      // Users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      
+      allow update: if isAuthenticated() && 
+                     request.auth.uid == userId && 
+                     (
+                       // Allow ONLY device reset fields
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['deviceResetRequested', 'deviceResetRequestDate']) ||
+                       
+                       // FIXED: Allow initial device registration (if not already set)
+                        (
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredDeviceId']) &&
+                          (
+                            resource.data.get('registeredDeviceId', null) == null || 
+                            resource.data.get('registeredDeviceId', '') == ""
+                          )
+                        ) ||
+
+                       // OR allow other safe fields (not role, org, isActive, registeredDeviceId)
+                       (!request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['role', 'organizationId', 'isActive', 'registeredDeviceId']))
+                     );
+      
+      // Allow user creation during signup OR by Company Admin
+      allow create: if request.auth.uid == userId || isCompanyAdmin();
+    }
+    
+    // Locations
+    match /locations/{locationId} {
+      // Users can read locations in their org (query filters by organizationId)
+      // The app always queries with where('organizationId', '==', user.organizationId)
+      // So we just need to ensure user is authenticated
+      allow read: if isAuthenticated();
+      
+      // Only Admins can add/edit locations in their org
+      allow create: if isAdmin() && 
+                     sameOrganization(request.resource.data.organizationId);
+      
+      allow update, delete: if isAdmin() && 
+                             sameOrganization(resource.data.organizationId);
+    }
+    
+    // Attendance
+    match /attendance/{attendanceId} {
+      // Get specific document: Users can see their own + Admins can see all in org + Super Admin can see all
+      allow get: if isAuthenticated() && 
+                   (isSuperAdmin() || 
+                    sameOrganization(resource.data.organizationId) || 
+                    request.auth.uid == resource.data.userId);
+      
+      // List/Query: Admins can query all in org, Users can query their own, Super Admin can query all
+      allow list: if isAuthenticated() && 
+                    (isSuperAdmin() || isAdmin());
+      
+      // Users can mark attendance (create) for themselves
+      // Admins can create attendance for any user in their organization
+      allow create: if isAuthenticated() && 
+                     sameOrganization(request.resource.data.organizationId) &&
+                     (
+                       // User creating their own attendance
+                       request.resource.data.userId == request.auth.uid ||
+                       // OR Admin creating attendance for someone in their org
+                       isAdmin()
+                     );
+                     
+      // Admins can update/delete; Users can update their own (for checkout/breaks)
+      allow update: if (isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId))) ||
+                       (isAuthenticated() && request.auth.uid == resource.data.userId && sameOrganization(resource.data.organizationId));
+      
+      allow delete: if (isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)));
+    }
+    
+    // Leaves
+    match /leaves/{leaveId} {
+      allow read: if isAuthenticated() && 
+                   (isSuperAdmin() ||
+                    sameOrganization(resource.data.organizationId) || 
+                    request.auth.uid == resource.data.userId);
+      
+      // Users can create leave requests
+      allow create: if isAuthenticated() && 
+                     sameOrganization(request.resource.data.organizationId) &&
+                     request.resource.data.userId == request.auth.uid;
+      
+      // Admins and Users (their own) can update (e.g. cancel)
+      allow update: if (isAdmin() && sameOrganization(resource.data.organizationId)) ||
+                       (request.auth.uid == resource.data.userId);
+                       
+      allow delete: if isAdmin() && sameOrganization(resource.data.organizationId);
+    }
+    
+    // Notices (Company-specific)
+    match /notices/{noticeId} {
+      // Super Admin can read all notices, others can read in their org
+      allow read: if isAuthenticated() && 
+                   (isSuperAdmin() || sameOrganization(resource.data.organizationId));
+      
+      // Super Admin can write all notices, Company Admin can write in their org
+      allow create: if isSuperAdmin() || 
+                     (isAdmin() && sameOrganization(request.resource.data.organizationId));
+      
+      allow update: if isSuperAdmin() || 
+                     (isAdmin() && sameOrganization(resource.data.organizationId));
+                     
+      allow delete: if isSuperAdmin() || 
+                     (isAdmin() && sameOrganization(resource.data.organizationId));
+    }
+    
+    // App Updates (System-wide, managed by Super Admin only)
+    match /app_updates/{updateId} {
+      // All authenticated users can read active app updates
+      allow read: if isAuthenticated();
+      
+      // Only Super Admin can create/update/delete app updates
+      allow write: if isSuperAdmin();
+    }
+    
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && 
+                  (resource.data.userId == request.auth.uid || sameOrganization(resource.data.organizationId));
+      allow write: if isAuthenticated(); // Allow system/triggers to write
+    }
+
+    // Feedback
+    match /feedback/{feedbackId} {
+      allow create: if isAuthenticated();
+      allow read, update, delete: if isSuperAdmin();
+    }
+  }
+}

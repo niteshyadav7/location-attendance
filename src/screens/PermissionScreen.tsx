@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, Platform, PermissionsAndroid } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requestLocationPermission } from '../services/location';
-import Geolocation from 'react-native-geolocation-service';
+import { COLORS } from '../constants/theme';
 
 interface PermissionScreenProps {
   onComplete: () => void;
@@ -10,30 +10,7 @@ interface PermissionScreenProps {
 
 export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }) => {
   const [locationGranted, setLocationGranted] = useState(false);
-  const [cameraGranted, setCameraGranted] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  const requestCameraPermission = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-          {
-            title: 'Camera Permission',
-            message: 'This app needs camera access to verify your identity during attendance.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        console.warn(err);
-        return false;
-      }
-    }
-    return true; // iOS handles this differently
-  };
 
   const handleRequestPermissions = async () => {
     setLoading(true);
@@ -42,22 +19,18 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
     const locationResult = await requestLocationPermission();
     setLocationGranted(locationResult);
 
-    // Request Camera Permission
-    const cameraResult = await requestCameraPermission();
-    setCameraGranted(cameraResult);
-
     setLoading(false);
 
-    if (locationResult && cameraResult) {
+    if (locationResult) {
       // Mark permissions as requested
       await AsyncStorage.setItem('permissions_requested', 'true');
       onComplete();
     } else {
       Alert.alert(
-        'Permissions Required',
-        'Both Location and Camera permissions are required for the app to function properly. Please grant them in Settings.',
+        'Location Permission Required',
+        'Location permission is required to verify you are at the correct job site. Please grant it in Settings.',
         [
-          { text: 'OK', onPress: onComplete }
+          { text: 'OK' }
         ]
       );
     }
@@ -67,7 +40,7 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
     <View style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>Welcome to GeoAttendance</Text>
-        <Text style={styles.subtitle}>We need a few permissions to get started</Text>
+        <Text style={styles.subtitle}>We need access to your location</Text>
 
         <View style={styles.permissionCard}>
           <View style={styles.iconContainer}>
@@ -76,19 +49,7 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
           <View style={styles.textContainer}>
             <Text style={styles.permissionTitle}>Location Access</Text>
             <Text style={styles.permissionDescription}>
-              Required to verify you're at the correct location when marking attendance
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.permissionCard}>
-          <View style={styles.iconContainer}>
-            <Text style={styles.icon}>📷</Text>
-          </View>
-          <View style={styles.textContainer}>
-            <Text style={styles.permissionTitle}>Camera Access</Text>
-            <Text style={styles.permissionDescription}>
-              Required to capture your selfie for identity verification during check-in
+              This app collects location data to enable attendance verification at your job site during Check-In and Check-Out. This data is used only when the app is in use.
             </Text>
           </View>
         </View>
@@ -99,7 +60,7 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'Requesting...' : 'Grant Permissions'}
+            {loading ? 'Requesting...' : 'Grant Permission'}
           </Text>
         </TouchableOpacity>
 
@@ -114,7 +75,7 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: COLORS.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -125,19 +86,19 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     textAlign: 'center',
     marginBottom: 10,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: COLORS.text.secondary,
     textAlign: 'center',
     marginBottom: 40,
   },
   permissionCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     padding: 20,
     borderRadius: 15,
     marginBottom: 20,
@@ -151,7 +112,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#E3F2FD', // You might want to define a light primary in theme, but this is fine.
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
@@ -165,16 +126,16 @@ const styles = StyleSheet.create({
   permissionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 5,
   },
   permissionDescription: {
     fontSize: 14,
-    color: '#666',
+    color: COLORS.text.secondary,
     lineHeight: 20,
   },
   button: {
-    backgroundColor: '#007AFF',
+    backgroundColor: COLORS.primary,
     padding: 18,
     borderRadius: 12,
     alignItems: 'center',
@@ -182,7 +143,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   buttonText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -192,7 +153,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   skipText: {
-    color: '#666',
+    color: COLORS.text.secondary,
     fontSize: 14,
   },
 });

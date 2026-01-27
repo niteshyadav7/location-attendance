@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { getFirestore, collection, addDoc } from '@react-native-firebase/firestore';
+import { useLocations } from '../hooks/useLocations';
 import { getCurrentLocation, requestLocationPermission } from '../services/location';
 import { useNavigation } from '@react-navigation/native';
+import { COLORS } from '../constants/theme';
+import { useAuthStore } from '../store/useAuthStore'; // MULTI-TENANCY
+import { useAds } from '../hooks/useAds';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+
 
 export const AddLocationScreen = () => {
   const [name, setName] = useState('');
@@ -13,6 +18,11 @@ export const AddLocationScreen = () => {
   const [initialPosition, setInitialPosition] = useState({ lat: 12.9716, lng: 77.5946 }); // Bangalore
   const webViewRef = useRef<WebView>(null);
   const navigation = useNavigation();
+  const { addLocation } = useLocations();
+  const user = useAuthStore((state) => state.user); // MULTI-TENANCY: Get current user
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('adminLocations');
+
 
   useEffect(() => {
     const initLocation = async () => {
@@ -40,15 +50,21 @@ export const AddLocationScreen = () => {
       Alert.alert('Error', 'Please enter name and select location');
       return;
     }
+    
+    // MULTI-TENANCY: Check if user has organizationId
+    if (!user?.organizationId) {
+      Alert.alert('Error', 'User organization not found. Please contact support.');
+      return;
+    }
+    
     setLoading(true);
     try {
-      const db = getFirestore();
-      await addDoc(collection(db, 'locations'), {
+      await addLocation({
         name,
         radius: parseInt(radius),
         latitude: marker.lat,
         longitude: marker.lng,
-        timestamp: Date.now(),
+        organizationId: user.organizationId, // MULTI-TENANCY: Include organizationId
       });
       navigation.goBack();
     } catch (error: any) {
@@ -117,6 +133,7 @@ export const AddLocationScreen = () => {
           placeholder="Location Name"
           value={name}
           onChangeText={setName}
+          placeholderTextColor={COLORS.text.light}
         />
         <TextInput
           style={styles.input}
@@ -124,9 +141,22 @@ export const AddLocationScreen = () => {
           value={radius}
           onChangeText={setRadius}
           keyboardType="numeric"
+          placeholderTextColor={COLORS.text.light}
         />
       </View>
       
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background, marginBottom: 10 }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
+
       <View style={styles.mapContainer}>
         <WebView
           ref={webViewRef}
@@ -140,14 +170,14 @@ export const AddLocationScreen = () => {
       </View>
 
       <TouchableOpacity style={styles.button} onPress={handleSave} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save Location</Text>}
+        {loading ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.buttonText}>Save Location</Text>}
       </TouchableOpacity>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: COLORS.background },
   form: { padding: 20 },
   input: {
     borderWidth: 1,
@@ -156,6 +186,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 10,
     fontSize: 16,
+    backgroundColor: COLORS.white,
+    color: COLORS.text.primary,
   },
   mapContainer: { flex: 1, position: 'relative' },
   map: { flex: 1 },
@@ -167,13 +199,14 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 5,
     zIndex: 10,
+    color: COLORS.text.primary,
   },
   button: {
-    backgroundColor: '#007AFF',
+    backgroundColor: COLORS.primary,
     padding: 15,
     margin: 20,
     borderRadius: 10,
     alignItems: 'center',
   },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  buttonText: { color: COLORS.white, fontSize: 16, fontWeight: 'bold' },
 });

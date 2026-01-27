@@ -1,4 +1,4 @@
-import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
+import notifee, { AndroidImportance, EventType, TriggerType, TimestampTrigger } from '@notifee/react-native';
 import { Platform } from 'react-native';
 
 class NotificationService {
@@ -131,8 +131,8 @@ class NotificationService {
     data?: any
   ) {
     try {
-      const trigger = {
-        type: 'timestamp' as const,
+      const trigger: TimestampTrigger = {
+        type: TriggerType.TIMESTAMP,
         timestamp: triggerTime.getTime(),
       };
 

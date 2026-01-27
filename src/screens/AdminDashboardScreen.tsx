@@ -8,102 +8,50 @@ import {
   TouchableOpacity,
   TextInput,
   Animated,
-  SafeAreaView,
 } from 'react-native';
-import { getFirestore, collection, query, where, onSnapshot } from '@react-native-firebase/firestore';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserProfile } from '../types';
 import { format } from 'date-fns';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
+import { COLORS } from '../constants/theme';
+import { useAdminDashboard } from '../hooks/useAdminDashboard';
+import { useAuthStore } from '../store/useAuthStore';
+
+import { ScreenAdBanner, useScreenInterstitial } from '../components/ScreenAds';
+import { useAds } from '../hooks/useAds';
 
 export const AdminDashboardScreen = ({ navigation }: any) => {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<UserProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
-  const [stats, setStats] = useState({ working: 0, onBreak: 0, checkedOut: 0, offline: 0 });
-  const [refreshing, setRefreshing] = useState(false);
+  const user = useAuthStore((state) => state.user);
+  const { shouldShowAd } = useAds();
+  
+  // Interstitial on mount
+  useScreenInterstitial('adminDashboard');
+
+  const {
+    filteredUsers,
+    loading,
+    stats,
+    refreshing,
+    handleRefresh,
+    searchQuery,
+    setSearchQuery,
+    selectedStatus,
+    handleStatusFilter
+  } = useAdminDashboard();
+  
+
 
   React.useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-  useEffect(() => {
-    const db = getFirestore();
-    const q = query(collection(db, 'users'), where('role', '==', 'user'));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const userList: UserProfile[] = [];
-      let working = 0, onBreak = 0, checkedOut = 0, offline = 0;
-
-      snapshot.forEach((doc: any) => {
-        const userData = { ...doc.data(), uid: doc.id } as UserProfile;
-        userList.push(userData);
-
-        // Calculate Stats
-        const status = userData.currentStatus || 'OFFLINE';
-        if (status === 'WORKING') working++;
-        else if (status === 'ON_BREAK') onBreak++;
-        else if (status === 'CHECKED_OUT') checkedOut++;
-        else offline++;
-      });
-
-      setUsers(userList);
-      setFilteredUsers(userList);
-      setStats({ working, onBreak, checkedOut, offline });
-      setLoading(false);
-      setRefreshing(false);
-    }, (error) => {
-        console.error("Error fetching users:", error);
-        setLoading(false);
-        setRefreshing(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    let filtered = users;
-
-    // Filter by status if selected
-    if (selectedStatus) {
-      filtered = filtered.filter(user => {
-        const status = user.currentStatus || 'OFFLINE';
-        return status === selectedStatus;
-      });
-    }
-
-    // Filter by search query
-    if (searchQuery.trim() !== '') {
-      filtered = filtered.filter(user =>
-        user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        user.email.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    setFilteredUsers(filtered);
-  }, [searchQuery, users, selectedStatus]);
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-  };
-
-  const handleStatusFilter = (status: string) => {
-    // Toggle filter: if same status is clicked, clear filter
-    if (selectedStatus === status) {
-      setSelectedStatus(null);
-    } else {
-      setSelectedStatus(status);
-    }
-  };
-
   const getStatusColor = (status?: string) => {
     switch (status) {
-      case 'WORKING': return '#10b981';
-      case 'ON_BREAK': return '#f59e0b';
-      case 'CHECKED_OUT': return '#6b7280';
-      default: return '#ef4444';
+      case 'WORKING': return COLORS.status.working;
+      case 'ON_BREAK': return COLORS.status.onBreak;
+      case 'CHECKED_OUT': return COLORS.status.checkedOut;
+      default: return COLORS.status.offline;
     }
   };
 
@@ -116,7 +64,12 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
       }
   };
 
-  const handleUserPress = (userId: string) => {
+const handleUserPress = (userId: string) => {
+    if (!userId) {
+        console.warn("Attempted to navigate with empty userId");
+        return;
+    }
+    console.log("Navigating to UserDetails with:", userId);
     navigation.navigate('UserDetails', { userId });
   };
 
@@ -144,12 +97,12 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             isActive && styles.statCardActive
           ]}
         >
-          <Ionicons name={icon as any} size={28} color="#fff" />
+          <Ionicons name={icon as any} size={28} color={COLORS.white} />
           <Text style={styles.statNumber}>{count}</Text>
           <Text style={styles.statLabel}>{label}</Text>
           {isActive && (
             <View style={styles.activeIndicator}>
-              <Ionicons name="checkmark-circle" size={16} color="#fff" />
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.white} />
             </View>
           )}
         </LinearGradient>
@@ -168,7 +121,7 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
           {/* Left Section - Avatar */}
           <View style={styles.leftSection}>
             <LinearGradient
-              colors={['#667eea', '#764ba2']}
+              colors={COLORS.gradients.primary}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.avatar}
@@ -179,35 +132,39 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             {/* Status indicator dot on avatar */}
             <View style={[styles.statusIndicatorDot, { 
               backgroundColor: getStatusColor(item.currentStatus),
+              borderColor: COLORS.white,
             }]} />
           </View>
 
           {/* Middle Section - User Info */}
-          <View style={styles.userInfo}>
-            <View style={styles.nameRow}>
-              <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-              {item.isActive === false && (
-                <View style={styles.inactiveBadge}>
-                  <Ionicons name="ban-outline" size={10} color="#dc2626" />
-                  <Text style={styles.inactiveBadgeText}>Inactive</Text>
-                </View>
-              )}
-            </View>
-            
-            <View style={styles.emailRow}>
-              <Ionicons name="mail-outline" size={13} color="#9ca3af" />
-              <Text style={styles.email} numberOfLines={1}>{item.email}</Text>
-            </View>
-            
-            {item.lastActive && (
-              <View style={styles.lastActiveRow}>
-                <Ionicons name="time-outline" size={12} color="#9ca3af" />
-                <Text style={styles.lastActiveText}>
-                  {format(item.lastActive, 'MMM dd, h:mm a')}
-                </Text>
+        <View style={styles.userInfo}>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
+            {item.appVersion && (
+              <Text style={styles.appVersion}>v{item.appVersion}</Text>
+            )}
+            {item.isActive === false && (
+              <View style={styles.inactiveBadge}>
+                <Ionicons name="ban-outline" size={10} color={COLORS.status.offline} />
+                <Text style={styles.inactiveBadgeText}>Inactive</Text>
               </View>
             )}
           </View>
+          
+          <View style={styles.emailRow}>
+            <Ionicons name="mail-outline" size={13} color={COLORS.text.light} />
+            <Text style={styles.email} numberOfLines={1}>{item.email}</Text>
+          </View>
+          
+          {item.lastActive && (
+            <View style={styles.lastActiveRow}>
+              <Ionicons name="time-outline" size={12} color={COLORS.text.light} />
+              <Text style={styles.lastActiveText}>
+                {format(item.lastActive, 'MMM dd, h:mm a')}
+              </Text>
+            </View>
+          )}
+        </View>
 
           {/* Right Section - Status & Arrow */}
           <View style={styles.rightSection}>
@@ -218,7 +175,7 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             <Ionicons 
               name="chevron-forward" 
               size={20} 
-              color="#9ca3af" 
+              color={COLORS.text.light}
               style={styles.chevronIcon}
             />
           </View>
@@ -229,37 +186,39 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        <ScreenAdBanner screen="adminDashboard" />
+      </View>
       {/* Custom Header with Title and Search */}
       <View style={styles.headerContainer}>
         <Text style={styles.headerTitle}>Dashboard</Text>
         <View style={styles.compactSearchContainer}>
-          <Ionicons name="search" size={18} color="#9ca3af" style={styles.searchIcon} />
+          <Ionicons name="search" size={18} color={COLORS.text.light} style={styles.searchIcon} />
           <TextInput
             style={styles.compactSearchInput}
             placeholder="Search..."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={COLORS.text.light}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#9ca3af" />
+              <Ionicons name="close-circle" size={18} color={COLORS.text.light} />
             </TouchableOpacity>
           )}
         </View>
-      </View>
+        </View>
 
-      {/* Stats Header */}
-      <View style={styles.statsContainer}>
-        {renderStatCard('briefcase', stats.working, 'Working', ['#10b981', '#059669'], 'WORKING')}
-        {renderStatCard('cafe', stats.onBreak, 'On Break', ['#f59e0b', '#d97706'], 'ON_BREAK')}
-        {renderStatCard('checkmark-circle', stats.checkedOut, 'Done', ['#6b7280', '#4b5563'], 'CHECKED_OUT')}
-        {renderStatCard('moon', stats.offline, 'Offline', ['#ef4444', '#dc2626'], 'OFFLINE')}
+        {/* Stats Header */}
+        <View style={styles.statsContainer}>
+        {renderStatCard('briefcase', stats.working, 'Working', COLORS.gradients.working, 'WORKING')}
+        {renderStatCard('cafe', stats.onBreak, 'On Break', COLORS.gradients.onBreak, 'ON_BREAK')}
+        {renderStatCard('checkmark-circle', stats.checkedOut, 'Done', COLORS.gradients.checkedOut, 'CHECKED_OUT')}
+        {renderStatCard('moon', stats.offline, 'Offline', COLORS.gradients.offline, 'OFFLINE')}
       </View>
 
       {/* Content Container (Overlapping) */}
       <View style={styles.contentContainer}>
-        {/* Search Bar (Hidden/Deprecated, but structure remains for minimal diff) */}
         
         {/* Active Filter Indicator */}
         {selectedStatus && (
@@ -273,7 +232,7 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
                   'moon'
                 } 
                 size={20} 
-                color="#667eea" 
+                color={COLORS.primary} 
               />
             </View>
             <View style={styles.filterTextContainer}>
@@ -285,11 +244,11 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
               </Text>
             </View>
             <TouchableOpacity 
-              onPress={() => setSelectedStatus(null)}
+              onPress={() => handleStatusFilter(selectedStatus)}
               style={styles.clearFilterButton}
             >
               <Text style={styles.clearFilterText}>Clear</Text>
-              <Ionicons name="close-circle" size={18} color="#667eea" />
+              <Ionicons name="close-circle" size={18} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
         )}
@@ -297,7 +256,7 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
         {/* User List */}
         {loading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#667eea" />
+            <ActivityIndicator size="large" color={COLORS.primary} />
             <Text style={styles.loadingText}>Loading users...</Text>
           </View>
         ) : (
@@ -310,7 +269,7 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
             onRefresh={handleRefresh}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Ionicons name="people-outline" size={64} color="#d1d5db" />
+                <Ionicons name="people-outline" size={64} color={COLORS.text.light} />
                 <Text style={styles.emptyText}>
                   {searchQuery ? 'No users found matching your search' : 'No users found'}
                 </Text>
@@ -326,19 +285,19 @@ export const AdminDashboardScreen = ({ navigation }: any) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
   container: { 
     flex: 1, 
-    backgroundColor: '#f9fafb' 
+    backgroundColor: COLORS.background 
   },
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 16,
     gap: 10,
-    backgroundColor: '#f9fafb',
-    marginBottom: 115,
+    backgroundColor: COLORS.background,
+    marginBottom: 110,
   },
   statCard: {
     flex: 1,
@@ -356,25 +315,25 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
   statNumber: { 
     fontSize: 32, 
     fontWeight: 'bold',
-    color: '#fff',
+    color: COLORS.white,
     marginTop: 10,
     marginBottom: 6,
   },
   statLabel: { 
     fontSize: 13, 
-    color: '#fff', 
+    color: COLORS.white, 
     marginTop: 2,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
   statCardActive: {
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: COLORS.white,
     elevation: 6,
     transform: [{ scale: 1.02 }],
   },
@@ -383,10 +342,6 @@ const styles = StyleSheet.create({
     top: 8,
     right: 8,
   },
-  searchContainer: {
-    // Deprecated styles, keeping for reference or removal
-    display: 'none',
-  },
   headerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -394,17 +349,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 8,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#111827',
+    color: COLORS.text.primary,
   },
   compactSearchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
@@ -420,25 +375,20 @@ const styles = StyleSheet.create({
   compactSearchInput: {
     flex: 1,
     fontSize: 14,
-    color: '#1f2937',
+    color: COLORS.text.primary,
     paddingVertical: 0, 
     height: 20,
   },
   searchIcon: {
     marginRight: 6,
   },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#1f2937',
-  },
   filterIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ede9fe',
+    backgroundColor: '#ede9fe', // Keep simplified tint
     marginHorizontal: 16,
     marginBottom: 16,
-    marginTop: 8, // Added for clear separation
+    marginTop: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
@@ -450,11 +400,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 2,
-    shadowColor: '#667eea',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
@@ -464,17 +414,17 @@ const styles = StyleSheet.create({
   },
   filterText: {
     fontSize: 14,
-    color: '#5b21b6',
+    color: COLORS.secondary,
     fontWeight: '600',
     marginBottom: 2,
   },
   filterStatusText: {
     fontWeight: '700',
-    color: '#667eea',
+    color: COLORS.primary,
   },
   filterCount: {
     fontSize: 12,
-    color: '#7c3aed',
+    color: COLORS.secondary,
     fontWeight: '500',
   },
   clearFilterButton: {
@@ -483,12 +433,12 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 8,
   },
   clearFilterText: {
     fontSize: 13,
-    color: '#667eea',
+    color: COLORS.primary,
     fontWeight: '600',
   },
   list: { 
@@ -499,10 +449,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     elevation: 3,
-    shadowColor: '#667eea',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
@@ -523,7 +473,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 4,
-    shadowColor: '#667eea',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.35,
     shadowRadius: 6,
@@ -531,7 +481,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#fff',
+    color: COLORS.white,
   },
   statusIndicatorDot: {
     position: 'absolute',
@@ -541,7 +491,6 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: 3.5,
-    borderColor: '#ffffff',
     elevation: 3,
   },
   userInfo: { 
@@ -556,9 +505,15 @@ const styles = StyleSheet.create({
   name: { 
     fontSize: 16.5, 
     fontWeight: '700', 
-    color: '#111827',
+    color: COLORS.text.primary,
     flex: 1,
     letterSpacing: 0.2,
+  },
+  appVersion: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: COLORS.text.light,
+    marginLeft: 4,
   },
   inactiveBadge: {
     flexDirection: 'row',
@@ -571,7 +526,7 @@ const styles = StyleSheet.create({
   },
   inactiveBadgeText: {
     fontSize: 9.5,
-    color: '#dc2626',
+    color: COLORS.status.offline,
     fontWeight: '700',
   },
   emailRow: {
@@ -581,7 +536,7 @@ const styles = StyleSheet.create({
   },
   email: { 
     fontSize: 13, 
-    color: '#6b7280', 
+    color: COLORS.text.secondary, 
     fontWeight: '500',
     flex: 1,
   },
@@ -592,7 +547,7 @@ const styles = StyleSheet.create({
   },
   lastActiveText: {
     fontSize: 11.5,
-    color: '#9ca3af',
+    color: COLORS.text.light,
     fontWeight: '500',
   },
   rightSection: {
@@ -613,7 +568,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
   },
   statusText: { 
-    color: '#fff', 
+    color: COLORS.white, 
     fontSize: 11.5, 
     fontWeight: '700',
     letterSpacing: 0.4,
@@ -630,7 +585,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6b7280',
+    color: COLORS.text.secondary,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -640,7 +595,20 @@ const styles = StyleSheet.create({
   emptyText: { 
     textAlign: 'center', 
     marginTop: 16, 
-    color: '#9ca3af',
+    color: COLORS.text.light,
     fontSize: 14,
+  },
+  settingsButton: {
+    padding: 8,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
 });

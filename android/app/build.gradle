@@ -82,8 +82,8 @@ android {
         applicationId "com.locationattendence"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "3.1"
+        versionCode 26
+        versionName "3.9.0"
     }
     signingConfigs {
         debug {

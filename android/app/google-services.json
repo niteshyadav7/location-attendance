@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "595093717618",
-    "project_id": "location-3e329",
-    "storage_bucket": "location-3e329.firebasestorage.app"
+    "project_number": "548037448846",
+    "project_id": "location-tenant-attendance",
+    "storage_bucket": "location-tenant-attendance.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:595093717618:android:805112541ad3a4cb2478eb",
+        "mobilesdk_app_id": "1:548037448846:android:2c70ef44bb5cc6356b65df",
         "android_client_info": {
           "package_name": "com.locationattendence"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBBNUb_ANnbYtLyy0LekmZgSTHuycHyADI"
+          "current_key": "AIzaSyAmZgpCy7ssmGN6BMTKhEdw2qK_oMovntk"
         }
       ],
       "services": {

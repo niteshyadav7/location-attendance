@@ -1,86 +1,37 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, ScrollView, Modal } from 'react-native';
-import { getFirestore, collection, query, orderBy, onSnapshot, limit, updateDoc, doc, where, writeBatch } from '@react-native-firebase/firestore';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAdminNotifications } from '../hooks/useAdminNotifications';
+import { useNotices } from '../hooks/useLeaves';
 import { Notification, Notice } from '../types';
 import { format } from 'date-fns';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { COLORS } from '../constants/theme';
+import { useAds } from '../hooks/useAds';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 
-export const AdminNotificationScreen = () => {
+export const AdminNotificationScreen = ({ navigation }: any) => {
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('adminNotifications');
   const [activeTab, setActiveTab] = useState<'notifications' | 'notices'>('notifications');
   
   // Notifications State
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loadingNotifications, setLoadingNotifications] = useState(true);
+  // Notifications State
+  const { notifications, loading: loadingNotifications, markAllAsRead } = useAdminNotifications();
 
   // Notices State
-  const [notices, setNotices] = useState<Notice[]>([]);
-  const [loadingNotices, setLoadingNotices] = useState(true);
+  const { notices, loading: loadingNotices } = useNotices();
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null);
   const [noticeModalVisible, setNoticeModalVisible] = useState(false);
 
-  // Fetch Notifications
-  useEffect(() => {
-    const db = getFirestore();
-    const q = query(
-      collection(db, 'notifications'), 
-      orderBy('timestamp', 'desc'), 
-      limit(50)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const notifs: Notification[] = [];
-      snapshot.forEach((doc: any) => {
-        notifs.push({ id: doc.id, ...doc.data() } as Notification);
-      });
-      setNotifications(notifs);
-      setLoadingNotifications(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Fetch Notices
-  useEffect(() => {
-    const db = getFirestore();
-    const q = query(
-      collection(db, 'notices'),
-      where('isActive', '==', true)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const noticeList: Notice[] = [];
-      snapshot.forEach((doc: any) => {
-        const notice = { id: doc.id, ...doc.data() } as Notice;
-        if (!notice.expiresAt || notice.expiresAt > Date.now()) {
-          noticeList.push(notice);
-        }
-      });
-      noticeList.sort((a, b) => b.createdAt - a.createdAt);
-      setNotices(noticeList);
-      setLoadingNotices(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const markAllAsRead = async () => {
-    const db = getFirestore();
-    const batch = writeBatch(db);
-    
-    const unread = notifications.filter(n => !n.read);
-    if (unread.length === 0) return;
-
-    unread.forEach(n => {
-      const ref = doc(db, 'notifications', n.id);
-      batch.update(ref, { read: true });
-    });
-
-    try {
-      await batch.commit();
-    } catch (error) {
-      console.error("Error marking as read", error);
+  const handleNotificationPress = (item: Notification) => {
+    if (item.type === 'DEVICE_RESET' && item.userId) {
+      // Navigate to user details screen
+      navigation.navigate('UserDetails', { userId: item.userId });
     }
   };
+
+
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -88,26 +39,34 @@ export const AdminNotificationScreen = () => {
       case 'CHECK_OUT': return 'log-out-outline';
       case 'BREAK_START': return 'cafe-outline';
       case 'BREAK_END': return 'briefcase-outline';
+      case 'DEVICE_RESET': return 'phone-portrait-outline';
+      case 'MONEY_REQUEST': return 'wallet-outline';
+      case 'MONEY_APPROVED': return 'checkmark-circle-outline';
+      case 'MONEY_REJECTED': return 'close-circle-outline';
       default: return 'notifications-outline';
     }
   };
 
   const getColor = (type: string) => {
     switch (type) {
-      case 'CHECK_IN': return '#4caf50';
-      case 'CHECK_OUT': return '#f44336';
-      case 'BREAK_START': return '#ff9800';
+      case 'CHECK_IN': return COLORS.status.working;
+      case 'CHECK_OUT': return COLORS.status.checkedOut;
+      case 'BREAK_START': return COLORS.status.onBreak;
       case 'BREAK_END': return '#2196f3';
-      default: return '#666';
+      case 'DEVICE_RESET': return '#f59e0b'; // Orange/amber for device reset requests
+      case 'MONEY_REQUEST': return '#10b981'; // Green for money requests
+      case 'MONEY_APPROVED': return '#22c55e'; // Bright green for approved
+      case 'MONEY_REJECTED': return '#ef4444'; // Red for rejected
+      default: return COLORS.text.secondary;
     }
   };
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case 'urgent': return '#FF3B30';
-      case 'high': return '#FF9500';
-      case 'normal': return '#007AFF';
-      default: return '#8E8E93';
+      case 'urgent': return COLORS.priority.urgent;
+      case 'high': return COLORS.priority.high;
+      case 'normal': return COLORS.priority.normal;
+      default: return COLORS.priority.low;
     }
   };
 
@@ -120,18 +79,31 @@ export const AdminNotificationScreen = () => {
     }
   };
 
-  const renderNotificationItem = ({ item }: { item: Notification }) => (
-    <View style={[styles.card, !item.read && styles.unreadCard]}>
-      <View style={[styles.iconContainer, { backgroundColor: getColor(item.type) }]}>
-        <Icon name={getIcon(item.type)} size={24} color="#fff" />
-      </View>
-      <View style={styles.contentContainer}>
-        <Text style={styles.message}>{item.message}</Text>
-        <Text style={styles.time}>{format(item.timestamp, 'PP p')}</Text>
-      </View>
-      {!item.read && <View style={styles.dot} />}
-    </View>
-  );
+  const renderNotificationItem = ({ item }: { item: Notification }) => {
+    const isDeviceReset = item.type === 'DEVICE_RESET';
+    const CardComponent = isDeviceReset ? TouchableOpacity : View;
+    
+    return (
+      <CardComponent 
+        style={[styles.card, !item.read && styles.unreadCard]}
+        onPress={isDeviceReset ? () => handleNotificationPress(item) : undefined}
+        activeOpacity={isDeviceReset ? 0.7 : 1}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: getColor(item.type) }]}>
+          <Icon name={getIcon(item.type)} size={24} color={COLORS.white} />
+        </View>
+        <View style={styles.contentContainer}>
+          <Text style={styles.message}>{item.message}</Text>
+          <Text style={styles.time}>{format(item.timestamp, 'PP p')}</Text>
+          {isDeviceReset && (
+            <Text style={styles.actionHint}>Tap to review and approve</Text>
+          )}
+        </View>
+        {!item.read && <View style={styles.dot} />}
+        {isDeviceReset && <Icon name="chevron-forward" size={20} color={COLORS.text.light} />}
+      </CardComponent>
+    );
+  };
 
   const renderNoticeItem = ({ item }: { item: Notice }) => (
     <TouchableOpacity 
@@ -164,7 +136,19 @@ export const AdminNotificationScreen = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.white }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
+
       {/* Tab Bar */}
       <View style={styles.tabBar}>
         <TouchableOpacity 
@@ -174,7 +158,7 @@ export const AdminNotificationScreen = () => {
           <Icon 
             name="notifications" 
             size={20} 
-            color={activeTab === 'notifications' ? '#667eea' : '#8E8E93'} 
+            color={activeTab === 'notifications' ? COLORS.primary : COLORS.text.light} 
           />
           <Text style={[styles.tabText, activeTab === 'notifications' && styles.activeTabText]}>
             Notifications
@@ -193,7 +177,7 @@ export const AdminNotificationScreen = () => {
           <Icon 
             name="megaphone" 
             size={20} 
-            color={activeTab === 'notices' ? '#667eea' : '#8E8E93'} 
+            color={activeTab === 'notices' ? COLORS.primary : COLORS.text.light} 
           />
           <Text style={[styles.tabText, activeTab === 'notices' && styles.activeTabText]}>
             Notice Board
@@ -220,7 +204,7 @@ export const AdminNotificationScreen = () => {
       {activeTab === 'notifications' ? (
         <>
           {loadingNotifications ? (
-            <ActivityIndicator size="large" color="#667eea" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
           ) : (
             <FlatList
               data={notifications}
@@ -234,7 +218,7 @@ export const AdminNotificationScreen = () => {
       ) : (
         <>
           {loadingNotices ? (
-            <ActivityIndicator size="large" color="#667eea" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
           ) : (
             <FlatList
               data={notices}
@@ -255,20 +239,20 @@ export const AdminNotificationScreen = () => {
               <Icon 
                 name={selectedNotice ? getPriorityIcon(selectedNotice.priority) : 'information-circle'} 
                 size={32} 
-                color={selectedNotice ? getPriorityColor(selectedNotice.priority) : '#007AFF'} 
+                color={selectedNotice ? getPriorityColor(selectedNotice.priority) : COLORS.priority.normal} 
               />
               <TouchableOpacity 
                 style={styles.closeButton}
                 onPress={() => setNoticeModalVisible(false)}
               >
-                <Icon name="close" size={24} color="#333" />
+                <Icon name="close" size={24} color={COLORS.text.primary} />
               </TouchableOpacity>
             </View>
 
             <Text style={styles.noticeModalTitle}>{selectedNotice?.title}</Text>
             
             <View style={styles.noticeModalMeta}>
-              <View style={[styles.priorityBadge, { backgroundColor: selectedNotice ? getPriorityColor(selectedNotice.priority) : '#007AFF' }]}>
+              <View style={[styles.priorityBadge, { backgroundColor: selectedNotice ? getPriorityColor(selectedNotice.priority) : COLORS.priority.normal }]}>
                 <Text style={styles.priorityText}>{selectedNotice?.priority.toUpperCase()}</Text>
               </View>
               <Text style={styles.noticeModalDate}>
@@ -289,17 +273,17 @@ export const AdminNotificationScreen = () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: COLORS.background },
   
   // Tab Bar
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -317,18 +301,18 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomColor: '#667eea',
+    borderBottomColor: COLORS.primary,
   },
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: COLORS.text.light,
   },
   activeTabText: {
-    color: '#667eea',
+    color: COLORS.primary,
   },
   badge: {
-    backgroundColor: '#FF3B30',
+    backgroundColor: COLORS.status.offline,
     borderRadius: 10,
     minWidth: 20,
     height: 20,
@@ -337,7 +321,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   badgeText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 11,
     fontWeight: 'bold',
   },
@@ -348,21 +332,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
     borderBottomColor: '#e9ecef',
   },
-  title: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  markReadText: { color: '#667eea', fontWeight: '600' },
+  title: { fontSize: 18, fontWeight: 'bold', color: COLORS.text.primary },
+  markReadText: { color: COLORS.primary, fontWeight: '600' },
 
   // List
   list: { padding: 15 },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#888', fontSize: 16 },
+  emptyText: { textAlign: 'center', marginTop: 50, color: COLORS.text.secondary, fontSize: 16 },
 
   // Notification Card
   card: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     padding: 15,
     borderRadius: 12,
     marginBottom: 12,
@@ -389,12 +373,18 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 14,
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 4,
   },
   time: {
     fontSize: 12,
-    color: '#888',
+    color: COLORS.text.secondary,
+  },
+  actionHint: {
+    fontSize: 12,
+    color: '#f59e0b',
+    fontWeight: '600',
+    marginTop: 4,
   },
   dot: {
     width: 8,
@@ -406,7 +396,7 @@ const styles = StyleSheet.create({
 
   // Notice Card
   noticeCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
@@ -430,12 +420,12 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 4,
   },
   noticeDate: {
     fontSize: 12,
-    color: '#999',
+    color: COLORS.text.light,
   },
   priorityBadge: {
     paddingHorizontal: 8,
@@ -444,13 +434,13 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   priorityText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 10,
     fontWeight: 'bold',
   },
   noticePreview: {
     fontSize: 14,
-    color: '#666',
+    color: COLORS.text.secondary,
     lineHeight: 20,
     marginTop: 4,
   },
@@ -463,7 +453,7 @@ const styles = StyleSheet.create({
     padding: 20 
   },
   modalContent: { 
-    backgroundColor: '#fff', 
+    backgroundColor: COLORS.white, 
     borderRadius: 15, 
     padding: 20,
     maxHeight: '80%',
@@ -480,7 +470,7 @@ const styles = StyleSheet.create({
   noticeModalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.text.primary,
     marginBottom: 12,
     lineHeight: 28,
   },
@@ -492,7 +482,7 @@ const styles = StyleSheet.create({
   },
   noticeModalDate: {
     fontSize: 13,
-    color: '#999',
+    color: COLORS.text.light,
   },
   noticeModalBody: {
     maxHeight: 300,
@@ -500,17 +490,17 @@ const styles = StyleSheet.create({
   },
   noticeModalMessage: {
     fontSize: 15,
-    color: '#333',
+    color: COLORS.text.primary,
     lineHeight: 24,
   },
   button: { 
-    backgroundColor: '#667eea', 
+    backgroundColor: COLORS.primary, 
     padding: 15, 
     borderRadius: 8, 
     alignItems: 'center',
   },
   buttonText: { 
-    color: '#fff', 
+    color: COLORS.white, 
     fontWeight: 'bold',
     fontSize: 16,
   },

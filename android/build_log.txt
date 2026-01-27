@@ -1,0 +1,349 @@
+> Task :gradle-plugin:settings-plugin:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :gradle-plugin:shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :gradle-plugin:shared:compileKotlin UP-TO-DATE
+> Task :gradle-plugin:shared:compileJava NO-SOURCE
+> Task :gradle-plugin:shared:processResources NO-SOURCE
+> Task :gradle-plugin:shared:classes UP-TO-DATE
+> Task :gradle-plugin:shared:jar UP-TO-DATE
+> Task :gradle-plugin:settings-plugin:compileKotlin UP-TO-DATE
+> Task :gradle-plugin:settings-plugin:compileJava NO-SOURCE
+> Task :gradle-plugin:settings-plugin:pluginDescriptors UP-TO-DATE
+> Task :gradle-plugin:settings-plugin:processResources UP-TO-DATE
+> Task :gradle-plugin:settings-plugin:classes UP-TO-DATE
+> Task :gradle-plugin:settings-plugin:jar UP-TO-DATE
+> Task :gradle-plugin:react-native-gradle-plugin:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :gradle-plugin:react-native-gradle-plugin:compileKotlin UP-TO-DATE
+> Task :gradle-plugin:react-native-gradle-plugin:compileJava NO-SOURCE
+> Task :gradle-plugin:react-native-gradle-plugin:pluginDescriptors UP-TO-DATE
+> Task :gradle-plugin:react-native-gradle-plugin:processResources UP-TO-DATE
+> Task :gradle-plugin:react-native-gradle-plugin:classes UP-TO-DATE
+> Task :gradle-plugin:react-native-gradle-plugin:jar UP-TO-DATE
+
+> Configure project :
+********************************************************************************
+
+WARNING: Setting `newArchEnabled=false` in your `gradle.properties` file is not
+supported anymore since React Native 0.82.
+
+You can remove the line from your `gradle.properties` file.
+
+The application will run with the New Architecture enabled by default.
+
+********************************************************************************
+
+
+> Configure project :notifee_react-native
+:notifee_react-native @notifee/react-native found at D:\yash-android-projects\locationAttendance\node_modules\@notifee\react-native
+:notifee_react-native package.json found at D:\yash-android-projects\locationAttendance\node_modules\@notifee\react-native\package.json
+:notifee_react-native:version set from package.json: 9.1.8 (9,1,8 - 9001008)
+:notifee_react-native:android.compileSdk using custom value: 36
+:notifee_react-native:android.targetSdk using custom value: 36
+:notifee_react-native:android.minSdk using custom value: 24
+:notifee_react-native:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-firebase_app
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_app:firebase.bom using default value: 34.4.0
+:react-native-firebase_app:play.play-services-auth using default value: 21.4.0
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_app:version set from package.json: 23.5.0 (23,5,0 - 23005000)
+:react-native-firebase_app:android.compileSdk using custom value: 36
+:react-native-firebase_app:android.targetSdk using custom value: 36
+:react-native-firebase_app:android.minSdk using custom value: 24
+:react-native-firebase_app:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-firebase_auth
+:react-native-firebase_auth package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\auth\package.json
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_auth:firebase.bom using default value: 34.4.0
+:react-native-firebase_auth package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\auth\package.json
+:react-native-firebase_auth:version set from package.json: 23.5.0 (23,5,0 - 23005000)
+:react-native-firebase_auth:android.compileSdk using custom value: 36
+:react-native-firebase_auth:android.targetSdk using custom value: 36
+:react-native-firebase_auth:android.minSdk using custom value: 24
+:react-native-firebase_auth:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-firebase_firestore
+:react-native-firebase_firestore package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\firestore\package.json
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_firestore:firebase.bom using default value: 34.4.0
+:react-native-firebase_firestore package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\firestore\package.json
+:react-native-firebase_firestore:version set from package.json: 23.5.0 (23,5,0 - 23005000)
+:react-native-firebase_firestore:android.compileSdk using custom value: 36
+:react-native-firebase_firestore:android.targetSdk using custom value: 36
+:react-native-firebase_firestore:android.minSdk using custom value: 24
+:react-native-firebase_firestore:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-firebase_messaging
+:react-native-firebase_messaging package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\messaging\package.json
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_messaging:firebase.bom using default value: 34.4.0
+:react-native-firebase_messaging package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\messaging\package.json
+:react-native-firebase_messaging:version set from package.json: 23.5.0 (23,5,0 - 23005000)
+:react-native-firebase_messaging:android.compileSdk using custom value: 36
+:react-native-firebase_messaging:android.targetSdk using custom value: 36
+:react-native-firebase_messaging:android.minSdk using custom value: 24
+:react-native-firebase_messaging:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-firebase_storage
+:react-native-firebase_storage package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\storage\package.json
+:react-native-firebase_app package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\app\package.json
+:react-native-firebase_storage:firebase.bom using default value: 34.4.0
+:react-native-firebase_storage package.json found at D:\yash-android-projects\locationAttendance\node_modules\@react-native-firebase\storage\package.json
+:react-native-firebase_storage:version set from package.json: 23.5.0 (23,5,0 - 23005000)
+:react-native-firebase_storage:android.compileSdk using custom value: 36
+:react-native-firebase_storage:android.targetSdk using custom value: 36
+:react-native-firebase_storage:android.minSdk using custom value: 24
+:react-native-firebase_storage:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Configure project :react-native-google-mobile-ads
+:react-native-google-mobile-ads package.json found at D:\yash-android-projects\locationAttendance\node_modules\react-native-google-mobile-ads\package.json
+:react-native-google-mobile-ads package.json found at D:\yash-android-projects\locationAttendance\node_modules\react-native-google-mobile-ads\package.json
+:react-native-google-mobile-ads:version set from package.json: 16.0.1 (16,0,1 - 16000001)
+:react-native-google-mobile-ads:android.compileSdk using custom value: 36
+:react-native-google-mobile-ads:android.targetSdk using custom value: 36
+:react-native-google-mobile-ads:android.minSdk using custom value: 24
+:react-native-google-mobile-ads:reactNativeAndroidDir D:\yash-android-projects\locationAttendance\node_modules\react-native
+
+> Task :app:generateAutolinkingNewArchitectureFiles UP-TO-DATE
+> Task :app:generateAutolinkingPackageList UP-TO-DATE
+> Task :app:generateCodegenSchemaFromJavaScript SKIPPED
+> Task :app:generateCodegenArtifactsFromSchema SKIPPED
+> Task :app:generateReactNativeEntryPoint UP-TO-DATE
+> Task :notifee_react-native:preBuild UP-TO-DATE
+> Task :react-native-async-storage_async-storage:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-async-storage_async-storage:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-async-storage_async-storage:preBuild UP-TO-DATE
+> Task :react-native-background-fetch:preBuild UP-TO-DATE
+> Task :react-native-community_datetimepicker:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-community_datetimepicker:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-community_datetimepicker:preBuild UP-TO-DATE
+> Task :react-native-date-picker:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-date-picker:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-date-picker:preBuild UP-TO-DATE
+> Task :react-native-device-info:preBuild UP-TO-DATE
+> Task :react-native-firebase_app:preBuild UP-TO-DATE
+> Task :react-native-firebase_auth:preBuild UP-TO-DATE
+> Task :react-native-firebase_firestore:preBuild UP-TO-DATE
+> Task :react-native-firebase_messaging:preBuild UP-TO-DATE
+> Task :react-native-firebase_storage:preBuild UP-TO-DATE
+> Task :react-native-fs:preBuild UP-TO-DATE
+> Task :react-native-geolocation-service:preBuild UP-TO-DATE
+> Task :react-native-google-mobile-ads:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-google-mobile-ads:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-google-mobile-ads:preBuild UP-TO-DATE
+> Task :react-native-linear-gradient:preBuild UP-TO-DATE
+> Task :react-native-safe-area-context:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-safe-area-context:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-safe-area-context:preBuild UP-TO-DATE
+> Task :react-native-screens:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-screens:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-screens:preBuild UP-TO-DATE
+> Task :react-native-share:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-share:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-share:preBuild UP-TO-DATE
+> Task :react-native-svg:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-svg:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-svg:preBuild UP-TO-DATE
+> Task :react-native-vector-icons:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-vector-icons:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-vector-icons:preBuild UP-TO-DATE
+> Task :react-native-webview:generateCodegenSchemaFromJavaScript UP-TO-DATE
+> Task :react-native-webview:generateCodegenArtifactsFromSchema UP-TO-DATE
+> Task :react-native-webview:preBuild UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :notifee_react-native:preDebugBuild UP-TO-DATE
+> Task :notifee_react-native:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-async-storage_async-storage:preDebugBuild UP-TO-DATE
+> Task :react-native-async-storage_async-storage:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-background-fetch:preDebugBuild UP-TO-DATE
+> Task :react-native-background-fetch:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-community_datetimepicker:preDebugBuild UP-TO-DATE
+> Task :react-native-community_datetimepicker:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-date-picker:preDebugBuild UP-TO-DATE
+> Task :react-native-date-picker:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-device-info:preDebugBuild UP-TO-DATE
+> Task :react-native-device-info:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-firebase_app:preDebugBuild UP-TO-DATE
+> Task :react-native-firebase_app:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-firebase_auth:preDebugBuild UP-TO-DATE
+> Task :react-native-firebase_auth:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-firebase_firestore:preDebugBuild UP-TO-DATE
+> Task :react-native-firebase_firestore:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-firebase_messaging:preDebugBuild UP-TO-DATE
+> Task :react-native-firebase_messaging:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-firebase_storage:preDebugBuild UP-TO-DATE
+> Task :react-native-firebase_storage:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-fs:preDebugBuild UP-TO-DATE
+> Task :react-native-fs:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-geolocation-service:preDebugBuild UP-TO-DATE
+> Task :react-native-geolocation-service:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-google-mobile-ads:preDebugBuild UP-TO-DATE
+> Task :react-native-google-mobile-ads:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-linear-gradient:preDebugBuild UP-TO-DATE
+> Task :react-native-linear-gradient:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-safe-area-context:preDebugBuild UP-TO-DATE
+> Task :react-native-safe-area-context:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-screens:preDebugBuild UP-TO-DATE
+> Task :react-native-screens:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-share:preDebugBuild UP-TO-DATE
+> Task :react-native-share:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-svg:preDebugBuild UP-TO-DATE
+> Task :react-native-svg:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-vector-icons:preDebugBuild UP-TO-DATE
+> Task :react-native-vector-icons:writeDebugAarMetadata UP-TO-DATE
+> Task :react-native-webview:preDebugBuild UP-TO-DATE
+> Task :react-native-webview:writeDebugAarMetadata UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:processDebugGoogleServices UP-TO-DATE
+> Task :notifee_react-native:generateDebugResValues UP-TO-DATE
+> Task :notifee_react-native:generateDebugResources UP-TO-DATE
+> Task :notifee_react-native:packageDebugResources UP-TO-DATE
+> Task :react-native-async-storage_async-storage:generateDebugResValues UP-TO-DATE
+> Task :react-native-async-storage_async-storage:generateDebugResources UP-TO-DATE
+> Task :react-native-async-storage_async-storage:packageDebugResources UP-TO-DATE
+> Task :react-native-background-fetch:generateDebugResValues UP-TO-DATE
+> Task :react-native-background-fetch:generateDebugResources UP-TO-DATE
+> Task :react-native-background-fetch:packageDebugResources UP-TO-DATE
+> Task :react-native-community_datetimepicker:generateDebugResValues UP-TO-DATE
+> Task :react-native-community_datetimepicker:generateDebugResources UP-TO-DATE
+> Task :react-native-community_datetimepicker:packageDebugResources UP-TO-DATE
+> Task :react-native-date-picker:generateDebugResValues UP-TO-DATE
+> Task :react-native-date-picker:generateDebugResources UP-TO-DATE
+> Task :react-native-date-picker:packageDebugResources UP-TO-DATE
+> Task :react-native-device-info:generateDebugResValues UP-TO-DATE
+> Task :react-native-device-info:generateDebugResources UP-TO-DATE
+> Task :react-native-device-info:packageDebugResources UP-TO-DATE
+> Task :react-native-firebase_app:generateDebugResValues UP-TO-DATE
+> Task :react-native-firebase_app:generateDebugResources UP-TO-DATE
+> Task :react-native-firebase_app:packageDebugResources UP-TO-DATE
+> Task :react-native-firebase_auth:generateDebugResValues UP-TO-DATE
+> Task :react-native-firebase_auth:generateDebugResources UP-TO-DATE
+> Task :react-native-firebase_auth:packageDebugResources UP-TO-DATE
+> Task :react-native-firebase_firestore:generateDebugResValues UP-TO-DATE
+> Task :react-native-firebase_firestore:generateDebugResources UP-TO-DATE
+> Task :react-native-firebase_firestore:packageDebugResources UP-TO-DATE
+> Task :react-native-firebase_messaging:generateDebugResValues UP-TO-DATE
+> Task :react-native-firebase_messaging:generateDebugResources UP-TO-DATE
+> Task :react-native-firebase_messaging:packageDebugResources UP-TO-DATE
+> Task :react-native-firebase_storage:generateDebugResValues UP-TO-DATE
+> Task :react-native-firebase_storage:generateDebugResources UP-TO-DATE
+> Task :react-native-firebase_storage:packageDebugResources UP-TO-DATE
+> Task :react-native-fs:generateDebugResValues UP-TO-DATE
+> Task :react-native-fs:generateDebugResources UP-TO-DATE
+> Task :react-native-fs:packageDebugResources UP-TO-DATE
+> Task :react-native-geolocation-service:generateDebugResValues UP-TO-DATE
+> Task :react-native-geolocation-service:generateDebugResources UP-TO-DATE
+> Task :react-native-geolocation-service:packageDebugResources UP-TO-DATE
+> Task :react-native-google-mobile-ads:generateDebugResValues UP-TO-DATE
+> Task :react-native-google-mobile-ads:generateDebugResources UP-TO-DATE
+> Task :react-native-google-mobile-ads:packageDebugResources UP-TO-DATE
+> Task :react-native-linear-gradient:generateDebugResValues UP-TO-DATE
+> Task :react-native-linear-gradient:generateDebugResources UP-TO-DATE
+> Task :react-native-linear-gradient:packageDebugResources UP-TO-DATE
+> Task :react-native-safe-area-context:generateDebugResValues UP-TO-DATE
+> Task :react-native-safe-area-context:generateDebugResources UP-TO-DATE
+> Task :react-native-safe-area-context:packageDebugResources UP-TO-DATE
+> Task :react-native-screens:generateDebugResValues UP-TO-DATE
+> Task :react-native-screens:generateDebugResources UP-TO-DATE
+> Task :react-native-screens:packageDebugResources UP-TO-DATE
+> Task :react-native-share:generateDebugResValues UP-TO-DATE
+> Task :react-native-share:generateDebugResources UP-TO-DATE
+> Task :react-native-share:packageDebugResources UP-TO-DATE
+> Task :react-native-svg:generateDebugResValues UP-TO-DATE
+> Task :react-native-svg:generateDebugResources UP-TO-DATE
+> Task :react-native-svg:packageDebugResources UP-TO-DATE
+> Task :react-native-vector-icons:generateDebugResValues UP-TO-DATE
+> Task :react-native-vector-icons:generateDebugResources UP-TO-DATE
+> Task :react-native-vector-icons:packageDebugResources UP-TO-DATE
+> Task :react-native-webview:generateDebugResValues UP-TO-DATE
+> Task :react-native-webview:generateDebugResources UP-TO-DATE
+> Task :react-native-webview:packageDebugResources UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :notifee_react-native:extractDeepLinksDebug UP-TO-DATE
+> Task :notifee_react-native:processDebugManifest UP-TO-DATE
+> Task :react-native-async-storage_async-storage:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-async-storage_async-storage:processDebugManifest UP-TO-DATE
+> Task :react-native-background-fetch:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-background-fetch:processDebugManifest UP-TO-DATE
+> Task :react-native-community_datetimepicker:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-community_datetimepicker:processDebugManifest UP-TO-DATE
+> Task :react-native-date-picker:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-date-picker:processDebugManifest UP-TO-DATE
+> Task :react-native-device-info:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-device-info:processDebugManifest UP-TO-DATE
+> Task :react-native-firebase_app:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-firebase_app:processDebugManifest UP-TO-DATE
+> Task :react-native-firebase_auth:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-firebase_auth:processDebugManifest UP-TO-DATE
+> Task :react-native-firebase_firestore:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-firebase_firestore:processDebugManifest UP-TO-DATE
+> Task :react-native-firebase_messaging:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-firebase_messaging:processDebugManifest UP-TO-DATE
+> Task :react-native-firebase_storage:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-firebase_storage:processDebugManifest UP-TO-DATE
+> Task :react-native-fs:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-fs:processDebugManifest UP-TO-DATE
+> Task :react-native-geolocation-service:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-geolocation-service:processDebugManifest UP-TO-DATE
+> Task :react-native-google-mobile-ads:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-google-mobile-ads:processDebugManifest UP-TO-DATE
+> Task :react-native-linear-gradient:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-linear-gradient:processDebugManifest UP-TO-DATE
+> Task :react-native-safe-area-context:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-safe-area-context:processDebugManifest UP-TO-DATE
+> Task :react-native-screens:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-screens:processDebugManifest UP-TO-DATE
+> Task :react-native-share:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-share:processDebugManifest UP-TO-DATE
+> Task :react-native-svg:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-svg:processDebugManifest UP-TO-DATE
+> Task :react-native-vector-icons:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-vector-icons:processDebugManifest UP-TO-DATE
+> Task :react-native-webview:extractDeepLinksDebug UP-TO-DATE
+> Task :react-native-webview:processDebugManifest UP-TO-DATE
+
+> Task :app:processDebugMainManifest FAILED
+D:\yash-android-projects\locationAttendance\android\app\src\main\AndroidManifest.xml:45:9-49 Error:
+	Attribute meta-data#com.google.firebase.messaging.default_notification_channel_id@value value=(attendance-notifications) from AndroidManifest.xml:45:9-49
+	is also present at [:react-native-firebase_messaging] AndroidManifest.xml:43:13-29 value=().
+	Suggestion: add 'tools:replace="android:value"' to <meta-data> element at AndroidManifest.xml:43:7-45:52 to override.
+
+See https://developer.android.com/r/studio-ui/build/manifest-merger for more information about the manifest merger.
+
+
+[Incubating] Problems report is available at: file:///D:/yash-android-projects/locationAttendance/android/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:processDebugMainManifest'.
+> Manifest merger failed : Attribute meta-data#com.google.firebase.messaging.default_notification_channel_id@value value=(attendance-notifications) from AndroidManifest.xml:45:9-49
+  	is also present at [:react-native-firebase_messaging] AndroidManifest.xml:43:13-29 value=().
+  	Suggestion: add 'tools:replace="android:value"' to <meta-data> element at AndroidManifest.xml:43:7-45:52 to override.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to generate a Build Scan (Powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.0.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 6s
+171 actionable tasks: 1 executed, 170 up-to-date

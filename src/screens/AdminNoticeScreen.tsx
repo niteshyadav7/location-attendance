@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator, Dimensions, SafeAreaView } from 'react-native';
-import { getFirestore, collection, addDoc, query, onSnapshot, updateDoc, doc, deleteDoc } from '@react-native-firebase/firestore';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useManageNotices } from '../hooks/useManageNotices';
 import { useAuthStore } from '../store/useAuthStore';
 import { Notice } from '../types';
+import { COLORS } from '../constants/theme';
+import { useAds } from '../hooks/useAds';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 
 export const AdminNoticeScreen = () => {
   const user = useAuthStore((state) => state.user);
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const { notices, loading: noticesLoading, addNotice, toggleNoticeActive, deleteNotice } = useManageNotices(user?.organizationId);
+  const { effectiveBannerId, shouldShowAd } = useAds();
+  const showAd = shouldShowAd('adminNotices');
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
@@ -16,37 +22,7 @@ export const AdminNoticeScreen = () => {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
   const [expiryDays, setExpiryDays] = useState('7');
 
-  const db = getFirestore();
-
-  useEffect(() => {
-    // Simplified query - sort in app instead of Firestore
-    const q = query(collection(db, 'notices'));
-    const unsubscribe = onSnapshot(
-      q, 
-      (snapshot) => {
-        if (!snapshot) {
-          console.log('No snapshot received');
-          return;
-        }
-
-        const noticeList: Notice[] = [];
-        snapshot.forEach((doc: any) => {
-          noticeList.push({ id: doc.id, ...doc.data() } as Notice);
-        });
-        
-        // Sort by createdAt in the app (newest first)
-        noticeList.sort((a, b) => b.createdAt - a.createdAt);
-        
-        setNotices(noticeList);
-      },
-      (error) => {
-        console.error('Error fetching notices:', error);
-        Alert.alert('Error', 'Failed to load notices. Please try again.');
-      }
-    );
-
-    return () => unsubscribe();
-  }, []);
+  // Data fetching handled by hook
 
   const handleCreateNotice = async () => {
     if (!title.trim() || !message.trim()) {
@@ -60,11 +36,12 @@ export const AdminNoticeScreen = () => {
         ? Date.now() + (parseInt(expiryDays) * 24 * 60 * 60 * 1000)
         : undefined;
 
-      await addDoc(collection(db, 'notices'), {
+      await addNotice({
         title: title.trim(),
         message: message.trim(),
         priority,
-        createdBy: user?.uid,
+        organizationId: user?.organizationId || '', // MULTI-TENANCY
+        createdBy: user?.uid || '',
         createdAt: Date.now(),
         expiresAt,
         isActive: true,
@@ -74,6 +51,7 @@ export const AdminNoticeScreen = () => {
       setTitle('');
       setMessage('');
       setPriority('medium');
+      setExpiryDays('7');
       setExpiryDays('7');
       setShowForm(false);
     } catch (error: any) {
@@ -85,9 +63,7 @@ export const AdminNoticeScreen = () => {
 
   const handleToggleActive = async (noticeId: string, currentStatus: boolean) => {
     try {
-      await updateDoc(doc(db, 'notices', noticeId), {
-        isActive: !currentStatus,
-      });
+      await toggleNoticeActive(noticeId, currentStatus);
     } catch (error: any) {
       Alert.alert('Error', error.message);
     }
@@ -104,7 +80,7 @@ export const AdminNoticeScreen = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'notices', noticeId));
+              await deleteNotice(noticeId);
               Alert.alert('Success', 'Notice deleted');
             } catch (error: any) {
               Alert.alert('Error', error.message);
@@ -117,11 +93,11 @@ export const AdminNoticeScreen = () => {
 
   const getPriorityColor = (p: string) => {
     switch (p) {
-      case 'urgent': return '#E74C3C';
-      case 'high': return '#F39C12';
-      case 'medium': return '#3498DB';
-      case 'low': return '#95A5A6';
-      default: return '#95A5A6';
+      case 'urgent': return COLORS.priority.urgent;
+      case 'high': return COLORS.priority.high;
+      case 'medium': return COLORS.priority.normal;
+      case 'low': return COLORS.priority.low;
+      default: return COLORS.priority.low;
     }
   };
 
@@ -147,6 +123,18 @@ export const AdminNoticeScreen = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={{ alignItems: 'center', backgroundColor: COLORS.background }}>
+        {showAd && (
+          <BannerAd
+            unitId={effectiveBannerId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        )}
+      </View>
+
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
@@ -177,7 +165,7 @@ export const AdminNoticeScreen = () => {
               placeholder="Enter notice title..."
               value={title}
               onChangeText={setTitle}
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={COLORS.text.light}
             />
 
             <Text style={styles.label}>Message</Text>
@@ -189,7 +177,7 @@ export const AdminNoticeScreen = () => {
               multiline
               numberOfLines={4}
               textAlignVertical="top"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={COLORS.text.light}
             />
 
             <Text style={styles.label}>Priority</Text>
@@ -221,8 +209,10 @@ export const AdminNoticeScreen = () => {
               value={expiryDays}
               onChangeText={setExpiryDays}
               keyboardType="numeric"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={COLORS.text.light}
             />
+
+
 
             <View style={styles.formActions}>
               <TouchableOpacity
@@ -246,7 +236,7 @@ export const AdminNoticeScreen = () => {
                 activeOpacity={0.8}
               >
                 {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={COLORS.white} />
                 ) : (
                   <Text style={styles.submitButtonText}>Post Notice</Text>
                 )}
@@ -292,6 +282,8 @@ export const AdminNoticeScreen = () => {
                   </Text>
                 )}
 
+
+
                 {/* Actions */}
                 <View style={styles.noticeActions}>
                   <TouchableOpacity
@@ -321,41 +313,38 @@ export const AdminNoticeScreen = () => {
   );
 };
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const scale = (size: number) => (SCREEN_WIDTH / 375) * size;
-const moderateScale = (size: number, factor = 0.5) => size + (scale(size) - size) * factor;
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.background,
   },
   container: {
     flex: 1,
-    padding: moderateScale(20),
+    padding: 20,
   },
   header: {
-    marginBottom: moderateScale(20),
+    marginBottom: 20,
   },
   headerTitle: {
-    fontSize: moderateScale(28),
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#1A1A1A',
-    marginBottom: moderateScale(4),
+    color: COLORS.text.primary,
+    marginBottom: 4,
   },
   headerSubtitle: {
-    fontSize: moderateScale(16),
-    color: '#6B7280',
+    fontSize: 16,
+    color: COLORS.text.secondary,
   },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#007AFF',
-    paddingVertical: moderateScale(16),
-    borderRadius: moderateScale(12),
-    marginBottom: moderateScale(20),
-    gap: moderateScale(8),
+    backgroundColor: COLORS.primary,
+    paddingVertical: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    gap: 8,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -363,18 +352,18 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   createButtonIcon: {
-    fontSize: moderateScale(20),
+    fontSize: 20,
   },
   createButtonText: {
-    color: '#FFFFFF',
-    fontSize: moderateScale(16),
+    color: COLORS.white,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   formCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: moderateScale(16),
-    padding: moderateScale(20),
-    marginBottom: moderateScale(20),
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -382,61 +371,67 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   formTitle: {
-    fontSize: moderateScale(20),
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#1A1A1A',
-    marginBottom: moderateScale(16),
+    color: COLORS.text.primary,
+    marginBottom: 16,
   },
   label: {
-    fontSize: moderateScale(14),
+    fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
-    marginBottom: moderateScale(8),
-    marginTop: moderateScale(12),
+    color: COLORS.text.primary,
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  labelHint: {
+    fontSize: 12,
+    color: COLORS.text.light,
+    marginBottom: 8,
+    marginTop: -4,
   },
   input: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: moderateScale(8),
-    padding: moderateScale(12),
-    fontSize: moderateScale(15),
-    color: '#1A1A1A',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    color: COLORS.text.primary,
   },
   textArea: {
-    height: moderateScale(100),
+    height: 100,
     textAlignVertical: 'top',
   },
   priorityContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: moderateScale(8),
+    gap: 8,
   },
   priorityButton: {
-    paddingHorizontal: moderateScale(16),
-    paddingVertical: moderateScale(10),
-    borderRadius: moderateScale(8),
-    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
   priorityButtonText: {
-    fontSize: moderateScale(12),
-    color: '#6B7280',
+    fontSize: 12,
+    color: COLORS.text.secondary,
     fontWeight: '600',
   },
   priorityButtonTextActive: {
-    color: '#FFFFFF',
+    color: COLORS.white,
   },
   formActions: {
     flexDirection: 'row',
-    gap: moderateScale(12),
-    marginTop: moderateScale(20),
+    gap: 12,
+    marginTop: 20,
   },
   actionButton: {
     flex: 1,
-    paddingVertical: moderateScale(14),
-    borderRadius: moderateScale(8),
+    paddingVertical: 14,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -444,50 +439,50 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
   },
   cancelButtonText: {
-    color: '#6B7280',
-    fontSize: moderateScale(15),
+    color: COLORS.text.secondary,
+    fontSize: 15,
     fontWeight: '600',
   },
   submitButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: COLORS.primary,
   },
   submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: moderateScale(15),
+    color: COLORS.white,
+    fontSize: 15,
     fontWeight: 'bold',
   },
   noticesSection: {
-    marginTop: moderateScale(10),
+    marginTop: 10,
   },
   sectionTitle: {
-    fontSize: moderateScale(18),
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#1A1A1A',
-    marginBottom: moderateScale(16),
+    color: COLORS.text.primary,
+    marginBottom: 16,
   },
   emptyState: {
     alignItems: 'center',
-    paddingVertical: moderateScale(60),
+    paddingVertical: 60,
   },
   emptyIcon: {
-    fontSize: moderateScale(64),
-    marginBottom: moderateScale(16),
+    fontSize: 64,
+    marginBottom: 16,
   },
   emptyText: {
-    fontSize: moderateScale(18),
+    fontSize: 18,
     fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: moderateScale(4),
+    color: COLORS.text.secondary,
+    marginBottom: 4,
   },
   emptySubtext: {
-    fontSize: moderateScale(14),
-    color: '#9CA3AF',
+    fontSize: 14,
+    color: COLORS.text.light,
   },
   noticeCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: moderateScale(12),
-    padding: moderateScale(16),
-    marginBottom: moderateScale(12),
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
     elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -499,47 +494,60 @@ const styles = StyleSheet.create({
   },
   noticePriorityBadge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: moderateScale(10),
-    paddingVertical: moderateScale(4),
-    borderRadius: moderateScale(6),
-    marginBottom: moderateScale(12),
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginBottom: 12,
   },
   noticePriorityText: {
-    color: '#FFFFFF',
-    fontSize: moderateScale(11),
+    color: COLORS.white,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   noticeTitle: {
-    fontSize: moderateScale(16),
+    fontSize: 16,
     fontWeight: 'bold',
-    color: '#1A1A1A',
-    marginBottom: moderateScale(8),
+    color: COLORS.text.primary,
+    marginBottom: 8,
   },
   noticeMessage: {
-    fontSize: moderateScale(14),
-    color: '#6B7280',
-    lineHeight: moderateScale(20),
-    marginBottom: moderateScale(8),
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    lineHeight: 20,
+    marginBottom: 8,
   },
   noticeDate: {
-    fontSize: moderateScale(12),
-    color: '#9CA3AF',
-    marginBottom: moderateScale(4),
+    fontSize: 12,
+    color: COLORS.text.light,
+    marginBottom: 4,
   },
   noticeExpiry: {
-    fontSize: moderateScale(12),
-    color: '#F59E0B',
+    fontSize: 12,
+    color: COLORS.status.onBreak,
+    fontWeight: '600',
+  },
+  appUrlBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  appUrlText: {
+    fontSize: 12,
+    color: '#0284C7',
     fontWeight: '600',
   },
   noticeActions: {
     flexDirection: 'row',
-    gap: moderateScale(8),
-    marginTop: moderateScale(12),
+    gap: 8,
+    marginTop: 12,
   },
   noticeActionButton: {
     flex: 1,
-    paddingVertical: moderateScale(8),
-    borderRadius: moderateScale(6),
+    paddingVertical: 8,
+    borderRadius: 6,
     alignItems: 'center',
   },
   deactivateButton: {
@@ -552,7 +560,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEE2E2',
   },
   noticeActionButtonText: {
-    fontSize: moderateScale(13),
+    fontSize: 13,
     fontWeight: '600',
+    color: COLORS.text.primary, 
   },
 });
