@@ -1,0 +1,3 @@
+Please place your proprietary Mantra MFS100 SDK library (.aar or .jar) in this folder.
+For example, rename the file to 'mfs100-sdk.aar' (or match whatever name you put).
+The gradle file is configured to dynamically load all *.aar and *.jar files from this directory.

@@ -42,7 +42,7 @@ export const AdminHomeScreen = () => {
   /* Moved Actions to Header to prevent obscuring content */
   /* Moved Actions to Header to prevent obscuring content */
   const renderHeader = () => (
-    <View>
+    <View style={{ marginBottom: 20 }}>
       <View style={styles.headerActions}>
           <TouchableOpacity
             style={[styles.actionCard, { backgroundColor: COLORS.status.working }]}
@@ -71,7 +71,33 @@ export const AdminHomeScreen = () => {
           </TouchableOpacity>
       </View>
 
+      <TouchableOpacity
+        style={[styles.actionCard, { backgroundColor: '#4F46E5', marginTop: 12 }]}
+        onPress={() => navigation.navigate('HiringPortal')}
+        activeOpacity={0.8}
+      >
+        <View style={styles.actionIcon}>
+           <Text style={{fontSize: 20}}>💼</Text>
+        </View>
+        <View style={{flex: 1}}>
+           <Text style={styles.actionCardTitle}>Find Local Workers (Hiring Directory)</Text>
+           <Text style={styles.actionCardSubtitle}>Search and hire verified staff in Kaasganj</Text>
+        </View>
+      </TouchableOpacity>
 
+      <TouchableOpacity
+        style={[styles.actionCard, { backgroundColor: '#10B981', marginTop: 12 }]}
+        onPress={() => navigation.navigate('AdminPaybook')}
+        activeOpacity={0.8}
+      >
+        <View style={styles.actionIcon}>
+           <Text style={{fontSize: 20}}>🪙</Text>
+        </View>
+        <View style={{flex: 1}}>
+           <Text style={styles.actionCardTitle}>Salary Paybook & Wages Ledger</Text>
+           <Text style={styles.actionCardSubtitle}>Manage staff wages, bonuses, and approved advances</Text>
+        </View>
+      </TouchableOpacity>
     </View>
   );
 
@@ -116,13 +142,22 @@ export const AdminHomeScreen = () => {
       </View>
 
       <View style={styles.actionRow}>
-        <TouchableOpacity 
-            onPress={() => openBreakModal(item)} 
-            style={[styles.actionBtn, styles.breakBtn]}
-        >
-             <Ionicons name="cafe-outline" size={20} color={COLORS.status.onBreak} />
-             <Text style={styles.breakBtnText}>Conf. Breaks</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity 
+                onPress={() => openBreakModal(item)} 
+                style={[styles.actionBtn, styles.breakBtn]}
+            >
+                 <Ionicons name="cafe-outline" size={20} color={COLORS.status.onBreak} />
+                 <Text style={styles.breakBtnText}>Breaks</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+                onPress={() => navigation.navigate('KioskAttendance', { location: item })} 
+                style={[styles.actionBtn, { backgroundColor: '#E0F2FE' }]}
+            >
+                 <Ionicons name="keypad-outline" size={20} color="#0369A1" />
+                 <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#0369A1' }}>Kiosk Mode</Text>
+            </TouchableOpacity>
+        </View>
 
         <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity onPress={() => handleEdit(item.id)} style={styles.iconBtn}>

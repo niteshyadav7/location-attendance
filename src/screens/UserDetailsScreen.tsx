@@ -18,6 +18,9 @@ import { COLORS } from '../constants/theme';
 import { useAdminUserDetails } from '../hooks/useAdminUserDetails';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { useAds } from '../hooks/useAds';
+import { useAuthStore } from '../store/useAuthStore';
+import { RateReviewModal } from '../components/RateReviewModal';
+import { useState, useEffect } from 'react';
 
 interface UserDetailsScreenProps {
   route: any;
@@ -26,8 +29,10 @@ interface UserDetailsScreenProps {
 
 export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, navigation }) => {
   const { userId } = route.params;
+  const currentOrg = useAuthStore((state) => state.organization);
   const { effectiveBannerId, shouldShowAd } = useAds();
   const showAd = shouldShowAd('userDetails');
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const {
     user,
     loading,
@@ -45,7 +50,34 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
     handleEndBreak,
     startingBreak,
     endingBreak,
+    toggleNoticePeriod,
+    updateSalaryConfig,
+    refresh,
   } = useAdminUserDetails(userId);
+
+  const [selSalaryType, setSelSalaryType] = useState<'daily' | 'monthly' | 'hourly'>('daily');
+  const [selSalaryRate, setSelSalaryRate] = useState<string>('');
+  const [isSavingSalary, setIsSavingSalary] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      setSelSalaryType(user.salaryType || 'daily');
+      setSelSalaryRate(user.salaryRate ? user.salaryRate.toString() : '');
+    }
+  }, [user]);
+
+  const handleSaveSalary = async () => {
+    if (!selSalaryRate || isNaN(Number(selSalaryRate)) || Number(selSalaryRate) <= 0) {
+      Alert.alert('Invalid Rate', 'Please enter a valid wage amount greater than zero.');
+      return;
+    }
+    setIsSavingSalary(true);
+    try {
+      await updateSalaryConfig(selSalaryType, Number(selSalaryRate));
+    } finally {
+      setIsSavingSalary(false);
+    }
+  };
 
   // Break Settings State
 
@@ -309,6 +341,148 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
                   </View>
                   <Ionicons name="chevron-forward-outline" size={20} color={COLORS.text.secondary} />
              </TouchableOpacity>
+
+             <View style={styles.divider} />
+             
+             {/* Local Hiring Notice Period Control */}
+             <View style={{ marginTop: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 }}>
+                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Ionicons name="briefcase-outline" size={20} color={COLORS.primary} />
+                            <View>
+                                 <Text style={styles.infoLabel}>Notice Period Mode</Text>
+                                 <Text style={{ fontSize: 11, color: COLORS.text.secondary, marginTop: 2 }}>
+                                      {user.noticePeriodActive 
+                                           ? `Active (Visible in Kaasganj pool)` 
+                                           : `Inactive (Hidden from other shops)`}
+                                 </Text>
+                            </View>
+                       </View>
+                       <Switch
+                            value={user.noticePeriodActive || false}
+                            onValueChange={(val) => {
+                                 Alert.alert(
+                                      val ? 'Activate Notice Mode' : 'Deactivate Notice Mode',
+                                      val 
+                                           ? 'Are you sure you want to mark this employee as being on their 30-day notice period? This will list them in the local directory for other shops to hire.'
+                                           : 'Deactivate notice period? This will hide their profile from other shop owners.',
+                                      [
+                                           { text: 'Cancel', style: 'cancel' },
+                                           { text: val ? 'Activate' : 'Deactivate', onPress: () => toggleNoticePeriod(val) }
+                                      ]
+                                 );
+                            }}
+                            trackColor={{ false: '#D1D5DB', true: COLORS.primary }}
+                            thumbColor={COLORS.white}
+                       />
+                  </View>
+             </View>
+
+             <View style={styles.divider} />
+             
+             {/* Endorse & Review Button */}
+             <TouchableOpacity
+                  style={[styles.actionButton, { backgroundColor: '#FEF3C7', borderColor: '#F59E0B', borderWidth: 1, marginTop: 12 }]}
+                  onPress={() => setShowReviewModal(true)}
+                  activeOpacity={0.8}
+             >
+                  <Ionicons name="star" size={20} color="#D97706" />
+                  <Text style={[styles.actionButtonText, { color: '#B45309', fontWeight: 'bold' }]}>Rate & Endorse Staff</Text>
+             </TouchableOpacity>
+
+             <View style={styles.divider} />
+             
+             {/* Salary & Payout Configuration */}
+             <View style={{ marginTop: 15 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                       <Ionicons name="cash-outline" size={20} color={COLORS.primary} />
+                       <Text style={[styles.infoLabel, { fontWeight: 'bold', color: COLORS.text.primary, fontSize: 14 }]}>
+                            Salary & Wages Profile
+                       </Text>
+                  </View>
+                  
+                  <Text style={{ fontSize: 11, color: COLORS.text.secondary, marginBottom: 12 }}>
+                       Define the wage rate and payout frequency. Wages are computed automatically based on present attendance records.
+                  </Text>
+
+                  {/* Salary Type Selection */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                       {(['daily', 'monthly', 'hourly'] as const).map((type) => (
+                            <TouchableOpacity
+                                 key={type}
+                                 style={{
+                                      flex: 1,
+                                      paddingVertical: 8,
+                                      borderRadius: 8,
+                                      borderWidth: 1,
+                                      borderColor: selSalaryType === type ? COLORS.primary : '#E5E7EB',
+                                      backgroundColor: selSalaryType === type ? '#EEF2FF' : '#F9FAFB',
+                                      alignItems: 'center',
+                                 }}
+                                 onPress={() => setSelSalaryType(type)}
+                            >
+                                 <Text style={{
+                                      fontSize: 12,
+                                      fontWeight: '600',
+                                      color: selSalaryType === type ? COLORS.primary : COLORS.text.secondary,
+                                      textTransform: 'capitalize'
+                                 }}>
+                                      {type}
+                                 </Text>
+                            </TouchableOpacity>
+                       ))}
+                  </View>
+
+                  {/* Wage Rate Input */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                       <View style={{
+                            flex: 1,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            borderWidth: 1,
+                            borderColor: '#E5E7EB',
+                            borderRadius: 8,
+                            backgroundColor: '#F9FAFB',
+                            paddingHorizontal: 12,
+                       }}>
+                            <Text style={{ fontSize: 16, color: COLORS.text.secondary, marginRight: 4 }}>₹</Text>
+                            <TextInput
+                                 style={{
+                                      flex: 1,
+                                      height: 40,
+                                      fontSize: 14,
+                                      color: COLORS.text.primary,
+                                      paddingVertical: 0,
+                                 }}
+                                 placeholder="Enter wage rate"
+                                 keyboardType="numeric"
+                                 value={selSalaryRate}
+                                 onChangeText={setSelSalaryRate}
+                            />
+                       </View>
+
+                       <TouchableOpacity
+                            style={{
+                                 backgroundColor: COLORS.primary,
+                                 paddingHorizontal: 16,
+                                 height: 40,
+                                 borderRadius: 8,
+                                 justifyContent: 'center',
+                                 alignItems: 'center',
+                            }}
+                            onPress={handleSaveSalary}
+                            disabled={isSavingSalary}
+                       >
+                            {isSavingSalary ? (
+                                 <ActivityIndicator size="small" color={COLORS.white} />
+                            ) : (
+                                 <Text style={{ color: COLORS.white, fontWeight: 'bold', fontSize: 13 }}>
+                                      Save Profile
+                                 </Text>
+                            )}
+                       </TouchableOpacity>
+                  </View>
+             </View>
         </View>
       </View>
 
@@ -416,6 +590,17 @@ export const UserDetailsScreen: React.FC<UserDetailsScreenProps> = ({ route, nav
           />
         )}
       </View>
+      <RateReviewModal
+        visible={showReviewModal}
+        onClose={() => setShowReviewModal(false)}
+        userId={userId}
+        userName={user.name}
+        userSkills={user.skills || []}
+        userVerifiedSkills={user.verifiedSkills || []}
+        userOrgId={currentOrg?.id || ''}
+        userOrgName={currentOrg?.name || ''}
+        onSuccess={() => refresh()}
+      />
     </ScrollView>
   );
 };

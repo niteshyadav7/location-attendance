@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { generateTestData } from '../scripts/generateTestData';
+import { generateTestData } from '../../scripts/generateTestData';
 import { COLORS } from '../constants/theme';
 
 export const TestDataScreen = () => {
@@ -66,10 +66,10 @@ export const TestDataScreen = () => {
 
       <View style={styles.credentialsCard}>
         <Text style={styles.credentialsTitle}>🔑 Login Credentials:</Text>
-        <Text style={styles.credentialsText}>Password for all: <Text style={styles.bold}>Test@123</Text></Text>
+        <Text style={styles.credentialsText}>Password for all: <Text style={styles.bold}>Test@123</Text> (Super Admin: <Text style={styles.bold}>hack@123</Text>)</Text>
         <Text style={styles.credentialsText}></Text>
         <Text style={styles.credentialsText}>Super Admin:</Text>
-        <Text style={styles.credentialsEmail}>  superadmin@test.com</Text>
+        <Text style={styles.credentialsEmail}>  nitesh@hack.com</Text>
         <Text style={styles.credentialsText}></Text>
         <Text style={styles.credentialsText}>Company Admins:</Text>
         <Text style={styles.credentialsEmail}>  admin.techcorp@test.com</Text>

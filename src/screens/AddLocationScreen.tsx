@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Switch } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useLocations } from '../hooks/useLocations';
 import { getCurrentLocation, requestLocationPermission } from '../services/location';
@@ -14,15 +14,64 @@ export const AddLocationScreen = () => {
   const [name, setName] = useState('');
   const [radius, setRadius] = useState('50');
   const [marker, setMarker] = useState<{ lat: number; lng: number } | null>(null);
+  const [latInput, setLatInput] = useState('');
+  const [lngInput, setLngInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [initialPosition, setInitialPosition] = useState({ lat: 12.9716, lng: 77.5946 }); // Bangalore
   const webViewRef = useRef<WebView>(null);
   const navigation = useNavigation();
   const { addLocation } = useLocations();
   const user = useAuthStore((state) => state.user); // MULTI-TENANCY: Get current user
+  const [wifiLockEnabled, setWifiLockEnabled] = useState(false);
+  const [wifiSSID, setWifiSSID] = useState('');
   const { effectiveBannerId, shouldShowAd } = useAds();
   const showAd = shouldShowAd('adminLocations');
 
+  // Keep htmlContent completely static so the WebView NEVER reloads
+  const htmlContent = useRef(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100%; height: 100vh; }
+      </style>
+    </head>
+    <body>
+      <div id="map"></div>
+      <script>
+        var map = L.map('map').setView([12.9716, 77.5946], 15);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 19
+        }).addTo(map);
+
+        var marker = null;
+
+        window.updateMarker = function(lat, lng) {
+          if (marker) {
+            map.removeLayer(marker);
+          }
+          marker = L.marker([lat, lng]).addTo(map);
+          map.setView([lat, lng], 15);
+        };
+
+        map.on('click', function(e) {
+          window.updateMarker(e.latlng.lat, e.latlng.lng);
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'mapClick',
+            lat: e.latlng.lat,
+            lng: e.latlng.lng
+          }));
+        });
+      </script>
+    </body>
+    </html>
+  `).current;
 
   useEffect(() => {
     const initLocation = async () => {
@@ -45,30 +94,77 @@ export const AddLocationScreen = () => {
     initLocation();
   }, []);
 
+  // Sync state changes to input boxes and trigger WebView JS update
+  useEffect(() => {
+    if (marker) {
+      const parsedLat = parseFloat(latInput);
+      const parsedLng = parseFloat(lngInput);
+      if (isNaN(parsedLat) || Math.abs(parsedLat - marker.lat) > 0.00001) {
+        setLatInput(marker.lat.toFixed(6));
+      }
+      if (isNaN(parsedLng) || Math.abs(parsedLng - marker.lng) > 0.00001) {
+        setLngInput(marker.lng.toFixed(6));
+      }
+      webViewRef.current?.injectJavaScript(`if (window.updateMarker) { window.updateMarker(${marker.lat}, ${marker.lng}); }`);
+    }
+  }, [marker]);
+
+  const handleLatChange = (text: string) => {
+    setLatInput(text);
+    const val = parseFloat(text);
+    if (!isNaN(val)) {
+      setMarker(prev => {
+        const next = prev ? { ...prev, lat: val } : { lat: val, lng: parseFloat(lngInput) || 77.5946 };
+        webViewRef.current?.injectJavaScript(`if (window.updateMarker) { window.updateMarker(${next.lat}, ${next.lng}); }`);
+        return next;
+      });
+    }
+  };
+
+  const handleLngChange = (text: string) => {
+    setLngInput(text);
+    const val = parseFloat(text);
+    if (!isNaN(val)) {
+      setMarker(prev => {
+        const next = prev ? { ...prev, lng: val } : { lat: parseFloat(latInput) || 12.9716, lng: val };
+        webViewRef.current?.injectJavaScript(`if (window.updateMarker) { window.updateMarker(${next.lat}, ${next.lng}); }`);
+        return next;
+      });
+    }
+  };
+
   const handleSave = async () => {
+    console.log('📍 [handleSave] name:', name, 'marker:', marker, 'radius:', radius, 'user.orgId:', user?.organizationId, 'user.role:', user?.role);
     if (!name || !marker) {
-      Alert.alert('Error', 'Please enter name and select location');
+      Alert.alert('Error', 'Please enter name and select location on the map');
       return;
     }
     
     // MULTI-TENANCY: Check if user has organizationId
     if (!user?.organizationId) {
-      Alert.alert('Error', 'User organization not found. Please contact support.');
+      console.error('📍 [handleSave] No organizationId! user:', JSON.stringify(user));
+      Alert.alert('Error', 'User organization not found. Please re-login or contact support.');
       return;
     }
     
     setLoading(true);
     try {
-      await addLocation({
+      const locationData = {
         name,
-        radius: parseInt(radius),
+        radius: parseInt(radius) || 50,
         latitude: marker.lat,
         longitude: marker.lng,
         organizationId: user.organizationId, // MULTI-TENANCY: Include organizationId
-      });
+        wifiLockEnabled,
+        wifiSSID: wifiLockEnabled ? wifiSSID.trim() : '',
+      };
+      console.log('📍 [handleSave] Calling addLocation with:', JSON.stringify(locationData));
+      await addLocation(locationData);
+      console.log('📍 [handleSave] Location added successfully!');
       navigation.goBack();
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      console.error('📍 [handleSave] ERROR:', error.code, error.message, error);
+      Alert.alert('Error Adding Location', `${error.message || 'Unknown error'}\n\nCode: ${error.code || 'N/A'}`);
     } finally {
       setLoading(false);
     }
@@ -84,46 +180,6 @@ export const AddLocationScreen = () => {
       console.log('Error parsing message:', err);
     }
   };
-
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-      <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100%; height: 100vh; }
-      </style>
-    </head>
-    <body>
-      <div id="map"></div>
-      <script>
-        var map = L.map('map').setView([${initialPosition.lat}, ${initialPosition.lng}], 15);
-        
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors',
-          maxZoom: 19
-        }).addTo(map);
-
-        var marker = ${marker ? `L.marker([${marker.lat}, ${marker.lng}]).addTo(map)` : 'null'};
-
-        map.on('click', function(e) {
-          if (marker) {
-            map.removeLayer(marker);
-          }
-          marker = L.marker([e.latlng.lat, e.latlng.lng]).addTo(map);
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'mapClick',
-            lat: e.latlng.lat,
-            lng: e.latlng.lng
-          }));
-        });
-      </script>
-    </body>
-    </html>
-  `;
 
   return (
     <View style={styles.container}>
@@ -143,6 +199,55 @@ export const AddLocationScreen = () => {
           keyboardType="numeric"
           placeholderTextColor={COLORS.text.light}
         />
+
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+          <View style={{ flex: 1 }}>
+            <TextInput
+              style={styles.input}
+              placeholder="Latitude"
+              value={latInput}
+              onChangeText={handleLatChange}
+              keyboardType="numeric"
+              placeholderTextColor={COLORS.text.light}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <TextInput
+              style={styles.input}
+              placeholder="Longitude"
+              value={lngInput}
+              onChangeText={handleLngChange}
+              keyboardType="numeric"
+              placeholderTextColor={COLORS.text.light}
+            />
+          </View>
+        </View>
+
+        {/* Wi-Fi Lockdown Configuration */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 10, paddingHorizontal: 4 }}>
+          <View>
+            <Text style={{ fontSize: 15, fontWeight: 'bold', color: COLORS.text.primary }}>🛜 Store Wi-Fi Lockdown</Text>
+            <Text style={{ fontSize: 11, color: COLORS.text.secondary, marginTop: 2 }}>Bypass GPS Geofence if connected</Text>
+          </View>
+          <Switch
+            value={wifiLockEnabled}
+            onValueChange={setWifiLockEnabled}
+            trackColor={{ false: '#D1D5DB', true: COLORS.primary }}
+            thumbColor={COLORS.white}
+          />
+        </View>
+
+        {wifiLockEnabled && (
+          <TextInput
+            style={styles.input}
+            placeholder="Store Wi-Fi Name (SSID)"
+            value={wifiSSID}
+            onChangeText={setWifiSSID}
+            placeholderTextColor={COLORS.text.light}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        )}
       </View>
       
       <View style={{ alignItems: 'center', backgroundColor: COLORS.background, marginBottom: 10 }}>
@@ -165,6 +270,11 @@ export const AddLocationScreen = () => {
           onMessage={handleMessage}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          onLoadEnd={() => {
+            if (marker) {
+              webViewRef.current?.injectJavaScript(`if (window.updateMarker) { window.updateMarker(${marker.lat}, ${marker.lng}); }`);
+            }
+          }}
         />
         <Text style={styles.hint}>Tap on map to set location</Text>
       </View>

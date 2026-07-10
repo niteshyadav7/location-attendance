@@ -82,8 +82,8 @@ android {
         applicationId "com.locationattendence"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 26
-        versionName "3.9.0"
+        versionCode 33
+        versionName "4.0.5"
     }
     signingConfigs {
         debug {
@@ -119,6 +119,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation fileTree(dir: "libs", include: ["*.jar", "*.aar"])
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

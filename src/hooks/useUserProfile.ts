@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getFirestore, doc, getDoc, updateDoc } from '@react-native-firebase/firestore';
 import { getAuth, signOut } from '@react-native-firebase/auth';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useAuthStore } from '../store/useAuthStore';
 import { adminNotificationListener } from '../services/adminNotificationListener';
 import { format } from 'date-fns';
@@ -46,6 +47,7 @@ const formatDate = (date: any): string => {
 export const useUserProfile = () => {
     const user = useAuthStore((state) => state.user);
     const setUser = useAuthStore((state) => state.setUser);
+    const setOrganization = useAuthStore((state) => state.setOrganization);
     const [userDetails, setUserDetails] = useState<UserDetails>({});
     const [loading, setLoading] = useState(true);
 
@@ -99,19 +101,46 @@ export const useUserProfile = () => {
 
     const logout = async () => {
         const auth = getAuth();
-        if (user?.role === 'company_admin' || user?.role === 'super_admin') {
-            adminNotificationListener.stopListening();
+        
+        try {
+            if (user?.role === 'company_admin' || user?.role === 'super_admin') {
+                adminNotificationListener.stopListening();
+            }
             
-            // Remove FCM token
-            if (user?.uid) {
+            // Remove FCM token if the user is currently authenticated
+            if (user?.uid && auth.currentUser) {
                 const { fcmService } = require('../services/fcmService');
                 await fcmService.removeFCMToken(user.uid).catch((err: any) => {
                     console.error('Error removing FCM token:', err);
                 });
             }
+
+            // Sign out of Google Sign-in if signed in
+            try {
+                await GoogleSignin.revokeAccess();
+                console.log('Google Access Revoked');
+            } catch (revokeError) {
+                console.log('Google Access Revoke error or bypass:', revokeError);
+            }
+            try {
+                await GoogleSignin.signOut();
+                console.log('Google Sign-Out successful');
+            } catch (googleError) {
+                console.log('Google Sign-Out error or bypass:', googleError);
+            }
+
+            // Sign out of Firebase if currently signed in
+            if (auth.currentUser) {
+                await signOut(auth);
+                console.log('Firebase Sign-Out successful');
+            }
+        } catch (logoutError) {
+            console.error('Error during logout process:', logoutError);
+        } finally {
+            // Clean up state regardless of errors to ensure navigation updates to Login screen
+            setUser(null);
+            setOrganization(null);
         }
-        await signOut(auth);
-        setUser(null);
     };
 
     return { userDetails, loading, updateField, logout };

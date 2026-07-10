@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Mail, Clock, ChevronRight } from 'lucide-react';
+import { Mail, Clock, ChevronRight, Smartphone, Fingerprint } from 'lucide-react';
 import { format } from 'date-fns';
 
 const UserList = memo(({ users, onUserClick }) => {
@@ -42,12 +42,26 @@ const UserList = memo(({ users, onUserClick }) => {
               <Mail size={13} />
               {u.email}
             </div>
-            {u.lastActive && (
-              <div className="user-last-active">
-                <Clock size={12} />
-                {format(new Date(u.lastActive), 'MMM dd, h:mm a')}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {u.lastActive && (
+                <div className="user-last-active">
+                  <Clock size={12} />
+                  {format(new Date(u.lastActive), 'MMM dd, h:mm a')}
+                </div>
+              )}
+              <div className="user-security-badges">
+                {u.registeredDeviceId && (
+                  <span className="security-icon-badge device-locked" title="Device Locked">
+                    <Smartphone size={10} /> Lock
+                  </span>
+                )}
+                {u.fingerprintTemplate && (
+                  <span className="security-icon-badge fingerprint-enrolled" title="Fingerprint Registered">
+                    <Fingerprint size={10} /> Biometric
+                  </span>
+                )}
               </div>
-            )}
+            </div>
           </div>
 
           <div className="user-status">

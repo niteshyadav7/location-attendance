@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   TextInput,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserProfile } from '../types';
@@ -86,26 +87,28 @@ const handleUserPress = (userId: string) => {
       <TouchableOpacity
         activeOpacity={0.7}
         onPress={() => handleStatusFilter(status)}
-        style={{ flex: 1 }}
+        style={styles.statCardTouchable}
       >
-        <LinearGradient
-          colors={colors}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[
-            styles.statCard,
-            isActive && styles.statCardActive
-          ]}
-        >
-          <Ionicons name={icon as any} size={28} color={COLORS.white} />
-          <Text style={styles.statNumber}>{count}</Text>
-          <Text style={styles.statLabel}>{label}</Text>
-          {isActive && (
-            <View style={styles.activeIndicator}>
-              <Ionicons name="checkmark-circle" size={16} color={COLORS.white} />
-            </View>
-          )}
-        </LinearGradient>
+        <View style={styles.statCardContainer}>
+          <LinearGradient
+            colors={colors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[
+              styles.statCircle,
+              isActive && styles.statCircleActive
+            ]}
+          >
+            <Ionicons name={icon as any} size={14} color={COLORS.white} style={{ marginBottom: 1 }} />
+            <Text style={styles.statNumber}>{count}</Text>
+            {isActive && (
+              <View style={styles.activeIndicatorCircle}>
+                <Ionicons name="checkmark-circle" size={10} color={COLORS.white} />
+              </View>
+            )}
+          </LinearGradient>
+          <Text style={[styles.statLabelText, isActive && styles.statLabelTextActive]}>{label}</Text>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -191,7 +194,22 @@ const handleUserPress = (userId: string) => {
       </View>
       {/* Custom Header with Title and Search */}
       <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Dashboard</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={styles.headerTitle}>Dashboard</Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('AdminPaybook')}
+            style={{
+              padding: 8,
+              backgroundColor: '#EEF2FF',
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: '#C7D2FE',
+            }}
+          >
+            <Ionicons name="card" size={20} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.compactSearchContainer}>
           <Ionicons name="search" size={18} color={COLORS.text.light} style={styles.searchIcon} />
           <TextInput
@@ -207,7 +225,7 @@ const handleUserPress = (userId: string) => {
             </TouchableOpacity>
           )}
         </View>
-        </View>
+      </View>
 
         {/* Stats Header */}
         <View style={styles.statsContainer}>
@@ -267,6 +285,10 @@ const handleUserPress = (userId: string) => {
             contentContainerStyle={styles.list}
             refreshing={refreshing}
             onRefresh={handleRefresh}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            removeClippedSubviews={Platform.OS === 'android'}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Ionicons name="people-outline" size={64} color={COLORS.text.light} />
@@ -294,53 +316,69 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 16,
-    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
     backgroundColor: COLORS.background,
-    marginBottom: 110,
+    marginBottom: 12,
   },
-  statCard: {
+  statCardTouchable: {
     flex: 1,
-    paddingVertical: 20,
-    paddingHorizontal: 8,
-    borderRadius: 20,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 160,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 5,
   },
-  contentContainer: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  statCardContainer: {
+    alignItems: 'center',
+  },
+  statCircle: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3.5,
+    borderColor: 'transparent',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    position: 'relative',
+  },
+  statCircleActive: {
+    borderColor: COLORS.white,
+    elevation: 5,
+    transform: [{ scale: 1.05 }],
   },
   statNumber: { 
-    fontSize: 32, 
+    fontSize: 20, 
     fontWeight: 'bold',
     color: COLORS.white,
-    marginTop: 10,
-    marginBottom: 6,
+    marginTop: -2,
   },
-  statLabel: { 
-    fontSize: 13, 
-    color: COLORS.white, 
-    marginTop: 2,
+  statLabelText: { 
+    fontSize: 11, 
+    color: COLORS.text.secondary, 
+    marginTop: 6,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    textAlign: 'center',
+  },
+  statLabelTextActive: {
+    color: COLORS.primary,
     fontWeight: '700',
-    letterSpacing: 0.5,
   },
-  statCardActive: {
-    borderWidth: 3,
-    borderColor: COLORS.white,
-    elevation: 6,
-    transform: [{ scale: 1.02 }],
-  },
-  activeIndicator: {
+  activeIndicatorCircle: {
     position: 'absolute',
-    top: 8,
-    right: 8,
+    top: -2,
+    right: -2,
+    backgroundColor: COLORS.primary,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: COLORS.white,
+    width: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerContainer: {
     flexDirection: 'row',
@@ -349,6 +387,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 8,
+    backgroundColor: COLORS.background,
+  },
+  contentContainer: {
+    flex: 1,
     backgroundColor: COLORS.background,
   },
   headerTitle: {

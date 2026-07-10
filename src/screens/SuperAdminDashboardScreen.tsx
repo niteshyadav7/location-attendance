@@ -12,28 +12,62 @@ import {
   TextInput,
   TouchableWithoutFeedback,
   Keyboard,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSuperAdminDashboard } from '../hooks/useSuperAdminDashboard';
 import { COLORS } from '../constants/theme';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { AdSettingsModal } from '../components/AdSettingsModal';
+import { AppUpdateSettingsModal } from '../components/AppUpdateSettingsModal';
+import { useAuthStore } from '../store/useAuthStore';
 
 export const SuperAdminDashboardScreen = ({ navigation }: any) => {
+  const impersonateTenant = useAuthStore((state) => state.impersonateTenant);
   const { 
     pendingCompanies, 
     allCompanies, 
     loading, 
+    processingId,
     approveCompany, 
     rejectCompany,
     deleteCompanyAdmin,
     toggleCompanyStatus,
     updateCompanyAdminName,
-    updateCompanyAdminPassword 
+    updateCompanyAdminPassword,
+    approveAllPending
   } = useSuperAdminDashboard();
   
   const auth = getAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'all'>('pending');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  const filteredPending = pendingCompanies.filter(item => {
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return true;
+    return (
+      (item.orgName && item.orgName.toLowerCase().includes(query)) ||
+      (item.name && item.name.toLowerCase().includes(query)) ||
+      (item.email && item.email.toLowerCase().includes(query))
+    );
+  });
+
+  const filteredAll = allCompanies.filter(item => {
+    const query = searchQuery.toLowerCase().trim();
+    
+    // Apply Status Filter first
+    const isActive = item.isActive !== false;
+    if (statusFilter === 'active' && !isActive) return false;
+    if (statusFilter === 'inactive' && isActive) return false;
+
+    if (!query) return true;
+    return (
+      (item.orgName && item.orgName.toLowerCase().includes(query)) ||
+      (item.name && item.name.toLowerCase().includes(query)) ||
+      (item.email && item.email.toLowerCase().includes(query))
+    );
+  });
   
   // Edit Name Modal State
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -43,6 +77,21 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
   
   // Ad Settings Modal (Super Admin Only)
   const [showAdSettings, setShowAdSettings] = useState(false);
+  const [showUpdateSettings, setShowUpdateSettings] = useState(false);
+
+  // Reject Modal State
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [rejectUserId, setRejectUserId] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+
+  const handleRejectSubmit = () => {
+    if (rejectUserId) {
+      rejectCompany(rejectUserId, rejectReason.trim());
+      setRejectModalVisible(false);
+      setRejectUserId('');
+      setRejectReason('');
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert(
@@ -50,7 +99,19 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
       'Are you sure you want to logout?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', style: 'destructive', onPress: () => signOut(auth) }
+        { 
+          text: 'Logout', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              if (auth.currentUser) {
+                await signOut(auth);
+              }
+            } catch (error) {
+              console.log('Error during super admin logout:', error);
+            }
+          } 
+        }
       ]
     );
   };
@@ -91,25 +152,52 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
         </View>
         <View style={styles.info}>
           <Text style={styles.orgName}>{item.orgName}</Text>
-          <Text style={styles.adminName}>{item.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 }}>
+            <Text style={styles.adminName}>{item.name}</Text>
+            {item.companyRequestStatus === 'pending' && (
+              <View style={{ backgroundColor: '#eff6ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 9, color: '#2563eb', fontWeight: 'bold' }}>NEW FLOW</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.email}>{item.email}</Text>
+          {item.companyRequestPhone ? (
+            <Text style={[styles.email, { marginTop: 2 }]}>📞 {item.companyRequestPhone}</Text>
+          ) : null}
+          {item.companyRequestAddress ? (
+            <Text style={[styles.email, { marginTop: 2 }]}>📍 {item.companyRequestAddress}</Text>
+          ) : null}
         </View>
       </View>
       
       <View style={styles.actions}>
-        <TouchableOpacity 
-          style={[styles.button, styles.rejectButton]}
-          onPress={() => rejectCompany(item.uid)}
-        >
-          <Text style={styles.rejectText}>Reject</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.button, styles.approveButton]}
-          onPress={() => approveCompany(item.uid, item.organizationId)}
-        >
-          <Text style={styles.approveText}>Approve</Text>
-        </TouchableOpacity>
+        {processingId === item.uid ? (
+          <View style={{ flex: 1, paddingVertical: 8, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          </View>
+        ) : (
+          <>
+            <TouchableOpacity 
+              style={[styles.button, styles.rejectButton]}
+              onPress={() => {
+                setRejectUserId(item.uid);
+                setRejectReason('');
+                setRejectModalVisible(true);
+              }}
+              disabled={processingId !== null}
+            >
+              <Text style={styles.rejectText}>Reject</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.approveButton]}
+              onPress={() => approveCompany(item.uid, item.organizationId)}
+              disabled={processingId !== null}
+            >
+              <Text style={styles.approveText}>Approve</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
     </View>
   );
@@ -135,41 +223,67 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
           </View>
         </View>
         
-        <View style={styles.adminActionsGrid}>
-          <TouchableOpacity 
-            style={styles.adminActionButton}
-            onPress={() => openEditModal(item)}
-          >
-            <Ionicons name="pencil" size={18} color={COLORS.primary} />
-            <Text style={styles.adminActionText}>Edit Name</Text>
-          </TouchableOpacity>
+        {processingId === item.uid ? (
+          <View style={{ paddingVertical: 16, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          </View>
+        ) : (
+          <View style={styles.adminActionsGrid}>
+            <TouchableOpacity 
+              style={[styles.adminActionButton, { backgroundColor: '#eff6ff', borderColor: '#dbeafe' }]}
+              onPress={() => {
+                if (item.organization) {
+                  impersonateTenant(item, item.organization);
+                } else {
+                  Alert.alert('Error', 'Company organization details not loaded yet. Please try again.');
+                }
+              }}
+              disabled={processingId !== null}
+            >
+              <Ionicons name="eye-outline" size={18} color={COLORS.primary} />
+              <Text style={[styles.adminActionText, { color: COLORS.primary, fontWeight: 'bold' }]}>Explore</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.adminActionButton}
-            onPress={() => toggleCompanyStatus(item.uid, isActive)}
-          >
-            <Ionicons name={isActive ? "ban-outline" : "checkmark-circle-outline"} size={18} color={isActive ? COLORS.status.checkedOut : COLORS.status.working} />
-            <Text style={[styles.adminActionText, { color: isActive ? COLORS.status.checkedOut : COLORS.status.working }]}>
-                {isActive ? 'Deactivate' : 'Activate'}
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.adminActionButton}
+              onPress={() => openEditModal(item)}
+              disabled={processingId !== null}
+            >
+              <Ionicons name="pencil" size={18} color={COLORS.primary} />
+              <Text style={styles.adminActionText}>Edit Name</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.adminActionButton}
-            onPress={() => updateCompanyAdminPassword(item.email)}
-          >
-            <Ionicons name="key-outline" size={18} color="#f59e0b" />
-            <Text style={[styles.adminActionText, { color: '#f59e0b' }]}>Reset Pass</Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.adminActionButton}
+              onPress={() => toggleCompanyStatus(item.uid, isActive)}
+              disabled={processingId !== null}
+            >
+              <Ionicons name={isActive ? "ban-outline" : "checkmark-circle-outline"} size={18} color={isActive ? COLORS.status.checkedOut : COLORS.status.working} />
+              <Text style={[styles.adminActionText, { color: isActive ? COLORS.status.checkedOut : COLORS.status.working }]}
+              >
+                  {isActive ? 'Deactivate' : 'Activate'}
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.adminActionButton}
-            onPress={() => handleDelete(item)}
-          >
-            <Ionicons name="trash-outline" size={18} color="#ef4444" />
-            <Text style={[styles.adminActionText, { color: '#ef4444' }]}>Delete</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity 
+              style={styles.adminActionButton}
+              onPress={() => updateCompanyAdminPassword(item.email)}
+              disabled={processingId !== null}
+            >
+              <Ionicons name="key-outline" size={18} color="#f59e0b" />
+              <Text style={[styles.adminActionText, { color: '#f59e0b' }]}>Reset Pass</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.adminActionButton}
+              onPress={() => handleDelete(item)}
+              disabled={processingId !== null}
+            >
+              <Ionicons name="trash-outline" size={18} color="#ef4444" />
+              <Text style={[styles.adminActionText, { color: '#ef4444' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -191,6 +305,9 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
                 <Text style={styles.subtitle}>Dashboard</Text>
             </View>
             <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+                <TouchableOpacity onPress={() => setShowUpdateSettings(true)} style={styles.settingsButtonHeader}>
+                    <Ionicons name="cloud-download-outline" size={24} color={COLORS.primary} />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={() => setShowAdSettings(true)} style={styles.settingsButtonHeader}>
                     <Ionicons name="settings-outline" size={24} color={COLORS.primary} />
                 </TouchableOpacity>
@@ -240,7 +357,7 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
                 onPress={() => setActiveTab('pending')}
             >
                 <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>
-                    Pending ({pendingCompanies.length})
+                    Pending ({filteredPending.length})
                 </Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -248,17 +365,80 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
                 onPress={() => setActiveTab('all')}
             >
                 <Text style={[styles.tabText, activeTab === 'all' && styles.activeTabText]}>
-                    All Companies ({allCompanies.length})
+                    All ({filteredAll.length})
                 </Text>
             </TouchableOpacity>
+        </View>
+
+        {/* Search and Action Bar */}
+        <View style={styles.searchFilterContainer}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search-outline" size={18} color={COLORS.text.light} style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search company, admin, or email..."
+              placeholderTextColor={COLORS.text.light}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchButton}>
+                <Ionicons name="close-circle" size={18} color={COLORS.text.light} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {activeTab === 'pending' ? (
+            filteredPending.length > 0 && (
+              <TouchableOpacity 
+                style={styles.approveAllBtn} 
+                onPress={approveAllPending}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="checkmark-done-circle" size={20} color={COLORS.white} />
+                <Text style={styles.approveAllText}>Approve All ({filteredPending.length})</Text>
+              </TouchableOpacity>
+            )
+          ) : (
+            <View style={styles.filterPillsRow}>
+              <TouchableOpacity 
+                style={[styles.filterPill, statusFilter === 'all' && styles.activeFilterPill]}
+                onPress={() => setStatusFilter('all')}
+              >
+                <Text style={[styles.filterPillText, statusFilter === 'all' && styles.activeFilterPillText]}>All ({allCompanies.length})</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.filterPill, statusFilter === 'active' && styles.activeFilterPill]}
+                onPress={() => setStatusFilter('active')}
+              >
+                <Text style={[styles.filterPillText, statusFilter === 'active' && styles.activeFilterPillText]}>
+                  Active ({allCompanies.filter(c => c.isActive !== false).length})
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.filterPill, statusFilter === 'inactive' && styles.activeFilterPill]}
+                onPress={() => setStatusFilter('inactive')}
+              >
+                <Text style={[styles.filterPillText, statusFilter === 'inactive' && styles.activeFilterPillText]}>
+                  Inactive ({allCompanies.filter(c => c.isActive === false).length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
       <FlatList
-        data={activeTab === 'pending' ? pendingCompanies : allCompanies}
+        data={activeTab === 'pending' ? filteredPending : filteredAll}
         renderItem={activeTab === 'pending' ? renderPendingItem : renderAllItem}
         keyExtractor={item => item.uid}
         contentContainerStyle={styles.list}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
             <View style={styles.empty}>
                 <Ionicons name="list-outline" size={60} color={COLORS.text.light} />
@@ -306,6 +486,52 @@ export const SuperAdminDashboardScreen = ({ navigation }: any) => {
         </TouchableWithoutFeedback>
 
       </Modal>
+
+      {/* Reject Reason Modal */}
+      <Modal
+        visible={rejectModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setRejectModalVisible(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setRejectModalVisible(false)}>
+            <View style={styles.modalOverlay}>
+                <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Reject Request</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={rejectReason}
+                            onChangeText={setRejectReason}
+                            placeholder="Enter rejection reason (optional)"
+                            multiline
+                            numberOfLines={3}
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity 
+                                style={[styles.modalButton, styles.cancelButton]}
+                                onPress={() => setRejectModalVisible(false)}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.modalButton, { backgroundColor: '#dc2626' }]}
+                                onPress={handleRejectSubmit}
+                            >
+                                <Text style={styles.saveButtonText}>Reject</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </TouchableWithoutFeedback>
+            </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* App Update Settings Modal */}
+      <AppUpdateSettingsModal
+        visible={showUpdateSettings}
+        onClose={() => setShowUpdateSettings(false)}
+      />
 
       {/* Ad Settings Modal */}
       <AdSettingsModal
@@ -585,5 +811,71 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#dbeafe',
+  },
+  searchFilterContainer: {
+    marginTop: 12,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1F2937',
+    paddingVertical: 8,
+  },
+  clearSearchButton: {
+    padding: 4,
+  },
+  approveAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.status.working,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    gap: 8,
+  },
+  approveAllText: {
+    color: COLORS.white,
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 8,
+  },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  activeFilterPill: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  activeFilterPillText: {
+    color: COLORS.white,
   },
 });

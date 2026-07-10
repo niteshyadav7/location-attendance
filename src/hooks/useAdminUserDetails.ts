@@ -451,6 +451,38 @@ export const useAdminUserDetails = (userId: string) => {
     startingBreak,
     endingBreak,
     updateBreakSettings,
+    toggleNoticePeriod: async (isActive: boolean) => {
+      try {
+        const db = getFirestore();
+        const now = Date.now();
+        const noticeEndDate = isActive ? now + 30 * 24 * 60 * 60 * 1000 : null;
+
+        await updateDoc(doc(db, 'users', userId), {
+          noticePeriodActive: isActive,
+          noticeEndDate: noticeEndDate
+        });
+
+        // Also update the public hiring profile if it exists
+        const publicProfileRef = doc(db, 'hiring_profiles', userId);
+        const publicProfileSnap = await getDoc(publicProfileRef);
+        if (publicProfileSnap.exists()) {
+          await updateDoc(publicProfileRef, {
+            visibilityState: isActive ? 'notice' : 'active',
+            noticeEndDate: noticeEndDate
+          });
+        }
+
+        Alert.alert(
+          'Success', 
+          isActive 
+            ? 'Employee marked as being on Notice Period. They are now visible in the local job directory.'
+            : 'Notice Period deactivated.'
+        );
+        await fetchUserDetails();
+      } catch (error: any) {
+        Alert.alert('Error', error.message);
+      }
+    },
     resetDeviceLock: async () => {
         try {
             const db = getFirestore();
@@ -463,6 +495,29 @@ export const useAdminUserDetails = (userId: string) => {
             await fetchUserDetails();
         } catch (error: any) {
             Alert.alert('Error', error.message);
+        }
+    },
+    updateSalaryConfig: async (type: 'daily' | 'monthly' | 'hourly', rate: number) => {
+        try {
+            const db = getFirestore();
+            await updateDoc(doc(db, 'users', userId), {
+                salaryType: type,
+                salaryRate: rate
+            });
+
+            // Sync expected salary to hiring profile if they have one configured
+            const hiringRef = doc(db, 'hiring_profiles', userId);
+            const hiringSnap = await getDoc(hiringRef);
+            if (hiringSnap.exists()) {
+                await updateDoc(hiringRef, {
+                    expectedSalary: `${rate} per ${type === 'daily' ? 'day' : type === 'monthly' ? 'month' : 'hour'}`
+                });
+            }
+
+            Alert.alert('Success', 'Salary profile updated successfully');
+            await fetchUserDetails();
+        } catch (error: any) {
+            Alert.alert('Error', 'Failed to update salary configuration: ' + error.message);
         }
     },
     refresh: fetchUserDetails

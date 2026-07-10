@@ -315,6 +315,33 @@ const UserDetails = ({ user: currentUser }) => {
     });
   };
 
+  const handleFingerprintReset = async () => {
+    if (!user) return;
+
+    setConfirmDialog({
+      isOpen: true,
+      type: 'danger',
+      title: 'Delete Fingerprint Template',
+      message: `Are you sure you want to delete the registered fingerprint template for ${user.name}? This will prevent them from checking in at the kiosk until they re-enroll on the mobile app.`,
+      onConfirm: async () => {
+        try {
+          setActionLoading(true);
+          
+          await updateDoc(doc(db, 'users', userId), {
+            fingerprintTemplate: null
+          });
+
+          alert('✅ Fingerprint template deleted successfully.');
+          await fetchUserDetails();
+        } catch (error) {
+          console.error('Error deleting fingerprint template:', error);
+          alert('❌ Failed to delete fingerprint template. Please try again.');
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    });
+  };
 
 
   const getStatusColor = (status) => {
@@ -607,27 +634,60 @@ const UserDetails = ({ user: currentUser }) => {
               </span>
             </div>
           </div>
+
+          <div className="info-item">
+            <div className="info-icon">
+              <Shield size={18} />
+            </div>
+            <div className="info-content">
+              <span className="info-label">Fingerprint</span>
+              <span className={`info-badge ${user.fingerprintTemplate ? 'locked' : 'unlocked'}`} style={{ backgroundColor: user.fingerprintTemplate ? '#d1fae5' : '#fee2e2', color: user.fingerprintTemplate ? '#065f46' : '#991b1b' }}>
+                {user.fingerprintTemplate ? 'Registered' : 'Not Registered'}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Device Reset Section */}
-        {(user.registeredDeviceId || user.deviceResetRequested) && (
-          <div className="device-reset-section">
-            {user.deviceResetRequested && (
-              <div className="reset-requested-alert">
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+          {/* Device Reset Section */}
+          {(user.registeredDeviceId || user.deviceResetRequested) && (
+            <div className="device-reset-section" style={{ flex: 1, minWidth: '240px' }}>
+              {user.deviceResetRequested && (
+                <div className="reset-requested-alert">
+                  <Shield size={16} />
+                  <span>Device Reset Requested by User</span>
+                </div>
+              )}
+              <button 
+                className="device-reset-button" 
+                onClick={handleDeviceReset}
+                disabled={actionLoading}
+              >
+                <Shield size={18} />
+                {user.deviceResetRequested ? 'Approve Device Reset' : 'Unlink Device'}
+              </button>
+            </div>
+          )}
+
+          {/* Fingerprint Reset Section */}
+          {user.fingerprintTemplate && (
+            <div className="device-reset-section" style={{ flex: 1, minWidth: '240px', background: 'linear-gradient(135deg, #fee2e2, #fecaca)', borderColor: '#fca5a5' }}>
+              <div className="reset-requested-alert" style={{ background: '#fef2f2', border: '2px solid #fecaca', color: '#991b1b' }}>
                 <Shield size={16} />
-                <span>Device Reset Requested by User</span>
+                <span>Biometric Profile Enrolled</span>
               </div>
-            )}
-            <button 
-              className="device-reset-button" 
-              onClick={handleDeviceReset}
-              disabled={actionLoading}
-            >
-              <Shield size={18} />
-              {user.deviceResetRequested ? 'Approve Device Reset' : 'Unlink Device'}
-            </button>
-          </div>
-        )}
+              <button 
+                className="device-reset-button" 
+                onClick={handleFingerprintReset}
+                disabled={actionLoading}
+                style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}
+              >
+                <Shield size={18} />
+                Delete Fingerprint
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stats Cards */}

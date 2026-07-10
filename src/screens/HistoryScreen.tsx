@@ -532,6 +532,10 @@ export const HistoryScreen = () => {
         renderItem={renderAttendanceItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: 100 }]}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
             !loading ? (
                 <View style={styles.emptyContainer}>
@@ -642,7 +646,9 @@ export const HistoryScreen = () => {
               data={allUsers}
               keyExtractor={(item) => item.uid}
               initialNumToRender={15}
+              maxToRenderPerBatch={15}
               windowSize={5}
+              removeClippedSubviews={Platform.OS === 'android'}
               renderItem={renderUserItem}
             />
           </View>

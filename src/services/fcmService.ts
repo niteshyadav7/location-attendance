@@ -1,9 +1,24 @@
-import messaging from '@react-native-firebase/messaging';
+import { 
+  getMessaging, 
+  requestPermission, 
+  getToken, 
+  onTokenRefresh, 
+  onMessage, 
+  onNotificationOpenedApp, 
+  getInitialNotification, 
+  setBackgroundMessageHandler, 
+  deleteToken, 
+  registerDeviceForRemoteMessages,
+  AuthorizationStatus 
+} from '@react-native-firebase/messaging';
+import notifee, { AndroidImportance } from '@notifee/react-native';
 import { getFirestore, doc, updateDoc } from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
 import { Platform, PermissionsAndroid } from 'react-native';
 
 class FCMService {
   private fcmToken: string | null = null;
+  private tokenRefreshUnsubscribe: (() => void) | null = null;
 
   /**
    * Request notification permission (required for iOS and Android 13+)
@@ -20,10 +35,11 @@ class FCMService {
         }
       }
 
-      const authStatus = await messaging().requestPermission();
+      const messaging = getMessaging();
+      const authStatus = await requestPermission(messaging);
       const enabled =
-        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+        authStatus === AuthorizationStatus.AUTHORIZED ||
+        authStatus === AuthorizationStatus.PROVISIONAL;
 
       if (enabled) {
         console.log('Notification permission granted');
@@ -50,25 +66,41 @@ class FCMService {
         return;
       }
 
+      const messaging = getMessaging();
+
       // Register for remote notifications (iOS)
       if (Platform.OS === 'ios') {
-        await messaging().registerDeviceForRemoteMessages();
+        await registerDeviceForRemoteMessages(messaging);
       }
 
       // Get FCM token
-      const token = await messaging().getToken();
+      const token = await getToken(messaging);
       this.fcmToken = token;
       console.log('FCM Token:', token);
 
       // Save token to Firestore
       await this.saveFCMToken(userId, token);
 
+      // Unsubscribe existing listener if any
+      if (this.tokenRefreshUnsubscribe) {
+        this.tokenRefreshUnsubscribe();
+        this.tokenRefreshUnsubscribe = null;
+      }
+
       // Listen for token refresh
-      messaging().onTokenRefresh(async (newToken) => {
+      this.tokenRefreshUnsubscribe = onTokenRefresh(messaging, async (newToken) => {
         console.log('FCM Token refreshed:', newToken);
         this.fcmToken = newToken;
-        await this.saveFCMToken(userId, newToken);
+        const auth = getAuth();
+        if (auth.currentUser && auth.currentUser.uid === userId) {
+            await this.saveFCMToken(userId, newToken);
+        } else {
+            console.log('FCM Token refresh ignored: User is not authenticated or UID mismatch');
+        }
       });
+
+      // Create channel
+      await this.createNotificationChannel();
 
       // Setup notification listeners
       this.setupNotificationListeners();
@@ -82,6 +114,11 @@ class FCMService {
    */
   private async saveFCMToken(userId: string, token: string): Promise<void> {
     try {
+      const auth = getAuth();
+      if (!auth.currentUser || auth.currentUser.uid !== userId) {
+        console.log('FCM: Bypass saving token because user is signed out or UID mismatch');
+        return;
+      }
       const db = getFirestore();
       await updateDoc(doc(db, 'users', userId), {
         fcmToken: token,
@@ -94,26 +131,62 @@ class FCMService {
   }
 
   /**
+   * Create Android Notification Channel
+   */
+  async createNotificationChannel() {
+    try {
+      if (Platform.OS === 'android') {
+        await notifee.createChannel({
+          id: 'attendance-notifications',
+          name: 'Attendance Notifications',
+          importance: AndroidImportance.HIGH,
+          sound: 'default',
+        });
+        console.log('Notification channel created');
+      }
+    } catch (error) {
+       console.error('Error creating channel:', error);
+    }
+  }
+
+  /**
    * Setup listeners for foreground and background notifications
    */
   private setupNotificationListeners(): void {
+    const messaging = getMessaging();
+
     // Handle foreground notifications
-    messaging().onMessage(async (remoteMessage) => {
+    onMessage(messaging, async (remoteMessage) => {
       console.log('Foreground notification received:', remoteMessage);
       
-      // You can display a local notification here if needed
-      // The Cloud Function already sends the notification, so this is just for logging
+      // Display local notification using Notifee
+      if (remoteMessage.notification) {
+          try {
+            await notifee.displayNotification({
+                title: remoteMessage.notification.title,
+                body: remoteMessage.notification.body,
+                android: {
+                    channelId: 'attendance-notifications',
+                    smallIcon: 'ic_launcher', // Make sure this resource exists, or remove if causing issues (defaults to launcher)
+                    pressAction: {
+                        id: 'default',
+                    },
+                },
+            });
+          } catch (error) {
+              console.error('Error displaying local notification:', error);
+          }
+      }
     });
 
     // Handle notification opened when app is in background
-    messaging().onNotificationOpenedApp((remoteMessage) => {
+    onNotificationOpenedApp(messaging, (remoteMessage) => {
       console.log('Notification opened app from background:', remoteMessage);
       // You can navigate to a specific screen here based on notification data
     });
 
     // Handle notification opened when app was completely closed
-    messaging()
-      .getInitialNotification()
+    getInitialNotification(messaging)
       .then((remoteMessage) => {
         if (remoteMessage) {
           console.log('Notification opened app from quit state:', remoteMessage);
@@ -122,7 +195,7 @@ class FCMService {
       });
 
     // Handle background messages (Android)
-    messaging().setBackgroundMessageHandler(async (remoteMessage) => {
+    setBackgroundMessageHandler(messaging, async (remoteMessage) => {
       console.log('Background message received:', remoteMessage);
     });
   }
@@ -132,15 +205,24 @@ class FCMService {
    */
   async removeFCMToken(userId: string): Promise<void> {
     try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'users', userId), {
-        fcmToken: null,
-        fcmTokenUpdatedAt: Date.now(),
-      });
+      if (this.tokenRefreshUnsubscribe) {
+        this.tokenRefreshUnsubscribe();
+        this.tokenRefreshUnsubscribe = null;
+      }
+
+      const auth = getAuth();
+      if (auth.currentUser && auth.currentUser.uid === userId) {
+          const db = getFirestore();
+          await updateDoc(doc(db, 'users', userId), {
+            fcmToken: null,
+            fcmTokenUpdatedAt: Date.now(),
+          });
+      }
       
       // Delete the token from FCM
       if (this.fcmToken) {
-        await messaging().deleteToken();
+        const messaging = getMessaging();
+        await deleteToken(messaging);
         this.fcmToken = null;
       }
       

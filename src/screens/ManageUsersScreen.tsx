@@ -1,17 +1,31 @@
 import React, { useState } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, ScrollView, TextInput, Platform } from 'react-native';
-import { UserProfile } from '../types';
+import { UserProfile, JoinRequest } from '../types';
 import Icon from 'react-native-vector-icons/Ionicons';
+import firestore from '@react-native-firebase/firestore';
 import { useUsers, useUserCreation } from '../hooks/useUserManagement';
 import { useLocations } from '../hooks/useLocations';
 import { COLORS } from '../constants/theme';
 import { useAds } from '../hooks/useAds';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { EnrollFingerprintModal } from '../components/EnrollFingerprintModal';
 
 export const ManageUsersScreen = () => {
   // Hooks
-  const { users, loading, updateUserStatus, toggleUserActive, deleteUser, assignLocation } = useUsers();
+  const { 
+    users, 
+    joinRequests, 
+    loading, 
+    updateUserStatus, 
+    approveJoinRequest, 
+    rejectJoinRequest, 
+    toggleUserActive, 
+    deleteUser, 
+    assignLocation,
+    approveLeaveRequest,
+    rejectLeaveRequest
+  } = useUsers();
   const { locations } = useLocations();
   const { createUser, creating } = useUserCreation();
   const { effectiveBannerId, shouldShowAd } = useAds();
@@ -20,6 +34,37 @@ export const ManageUsersScreen = () => {
   // Local State
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<'users' | 'requests'>('users');
+  const [enrollModalVisible, setEnrollModalVisible] = useState(false);
+
+  // Leave Request Comment Modal State
+  const [showLeaveCommentModal, setShowLeaveCommentModal] = useState(false);
+  const [leaveCommentAction, setLeaveCommentAction] = useState<'approve' | 'reject'>('approve');
+  const [leaveAdminComment, setLeaveAdminComment] = useState('');
+  const [processingLeave, setProcessingLeave] = useState(false);
+
+  const handleResetDevice = async (userId: string) => {
+    try {
+      const db = firestore();
+      await db.collection('users').doc(userId).update({
+        registeredDeviceId: null,
+        deviceResetRequested: false,
+        deviceResetRequestDate: null
+      });
+      Alert.alert('Success', 'Device lock reset successfully.');
+      if (selectedUser && selectedUser.uid === userId) {
+        setSelectedUser({
+          ...selectedUser,
+          registeredDeviceId: undefined,
+          deviceResetRequested: false,
+          deviceResetRequestDate: undefined
+        });
+      }
+    } catch (error: any) {
+      Alert.alert('Error', 'Failed to reset device lock: ' + error.message);
+    }
+  };
   
   // Assign Location Modal Time States
   const [assignCheckInTime, setAssignCheckInTime] = useState('');
@@ -172,95 +217,131 @@ export const ManageUsersScreen = () => {
     );
   };
 
-  const renderItem = ({ item }: { item: UserProfile }) => (
-    <View style={styles.card}>
-      <View style={styles.userInfo}>
-        <View style={styles.headerRow}>
-            <Text style={styles.userName}>{item.name}</Text>
-            {item.status === 'pending' && (
-                <View style={[styles.badge, { backgroundColor: COLORS.status.onBreak + '20' }]}>
-                    <Text style={[styles.badgeText, { color: COLORS.status.onBreak }]}>Pending Approval</Text>
-                </View>
-            )}
-            {item.status === 'rejected' && (
-                <View style={[styles.badge, { backgroundColor: COLORS.status.offline + '20' }]}>
-                    <Text style={[styles.badgeText, { color: COLORS.status.offline }]}>Rejected</Text>
-                </View>
-            )}
-            {item.deviceResetRequested && (
-                <View style={[styles.badge, { backgroundColor: '#fef3c7' }]}>
-                    <Text style={[styles.badgeText, { color: '#d97706' }]}>Device Reset</Text>
-                </View>
-            )}
-            {item.isActive === false && (
-                <View style={[styles.badge, { backgroundColor: '#fce4ec' }]}>
-                    <Text style={[styles.badgeText, { color: '#e91e63' }]}>Inactive</Text>
-                </View>
-            )}
-        </View>
-        <Text style={styles.userEmail}>{item.email}</Text>
-        <Text style={styles.assignedText}>
-          Assigned: {item.assignedLocationId 
-            ? locations.find(l => l.id === item.assignedLocationId)?.name || 'Unknown'
-            : 'Not assigned'}
-        </Text>
-      </View>
-      
-      <View style={styles.actionButtonsContainer}>
-          {item.status === 'pending' ? (
-            <View style={styles.approvalButtons}>
-                <TouchableOpacity 
-                    style={[styles.actionButton, styles.approveButton]}
-                    onPress={() => handleUpdateStatus(item.uid, 'approved')}
-                >
-                    <Icon name="checkmark-circle-outline" size={20} color={COLORS.white} />
-                    <Text style={styles.actionButtonText}>Approve</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                    style={[styles.actionButton, styles.rejectButton]}
-                    onPress={() => handleUpdateStatus(item.uid, 'rejected')}
-                >
-                    <Icon name="close-circle-outline" size={20} color={COLORS.white} />
-                    <Text style={styles.actionButtonText}>Reject</Text>
-                </TouchableOpacity>
-            </View>
-          ) : null}
-          
-          <TouchableOpacity 
-            style={[styles.assignButton, item.status === 'pending' && styles.assignButtonSecondary]}
-            onPress={() => openLocationPicker(item)}
-          >
-            <Text style={[styles.assignButtonText, item.status === 'pending' && styles.assignButtonTextSecondary]}>
-                {item.assignedLocationId ? 'Change Location' : 'Assign Location'}
-            </Text>
-          </TouchableOpacity>
+  const renderItem = ({ item }: { item: UserProfile }) => {
+    const isPending = item.status === 'pending';
+    const isRejected = item.status === 'rejected';
+    const isInactive = item.isActive === false;
+    const hasDeviceReset = item.deviceResetRequested === true;
+    const isLeavePending = item.status === 'leave_pending';
 
-          <View style={styles.dangerButtonsRow}>
-            <TouchableOpacity 
-              style={[styles.actionButton, item.isActive === false ? styles.activateButton : styles.deactivateButton]}
-              onPress={() => handleToggleUserActive(item.uid, item.isActive)}
-            >
-              <Icon 
-                name={item.isActive === false ? "checkmark-done-outline" : "ban-outline"} 
-                size={18} 
-                color={COLORS.white} 
-              />
-              <Text style={styles.actionButtonText}>
-                {item.isActive === false ? 'Activate' : 'Deactivate'}
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.actionButton, styles.deleteButton]}
-              onPress={() => handleDeleteUser(item.uid, item.name)}
-            >
-              <Icon name="trash-outline" size={18} color={COLORS.white} />
-              <Text style={styles.actionButtonText}>Delete</Text>
-            </TouchableOpacity>
+    // Get location name
+    const assignedLocation = item.assignedLocationId
+      ? locations.find((l) => l.id === item.assignedLocationId)?.name || 'Unknown'
+      : 'Unassigned';
+
+    // Status styling
+    let statusText = 'Active';
+    let statusColor = '#059669'; // Emerald-600
+    let statusBg = '#ECFDF5';
+
+    if (isPending) {
+      statusText = 'Pending';
+      statusColor = '#D97706'; // Amber-600
+      statusBg = '#FFFBEB';
+    } else if (isRejected) {
+      statusText = 'Rejected';
+      statusColor = '#DC2626'; // Red-600
+      statusBg = '#FEF2F2';
+    } else if (isInactive) {
+      statusText = 'Inactive';
+      statusColor = '#E91E63'; // Pink-600
+      statusBg = '#FCE4EC';
+    } else if (hasDeviceReset) {
+      statusText = 'Reset Req';
+      statusColor = '#EA580C'; // Orange-600
+      statusBg = '#FFEDD5';
+    } else if (isLeavePending) {
+      statusText = 'Leave Req';
+      statusColor = '#EF4444'; // Red-500
+      statusBg = '#FEF2F2';
+    }
+
+    return (
+      <TouchableOpacity
+        style={styles.userRow}
+        activeOpacity={0.7}
+        onPress={() => {
+          setSelectedUser(item);
+          setDetailsModalVisible(true);
+        }}
+      >
+        <View style={styles.avatarCircle}>
+          <Text style={styles.avatarCircleText}>
+            {item.name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+
+        <View style={styles.userRowContent}>
+          <Text style={styles.userRowName} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={styles.userRowSub} numberOfLines={1}>
+            {item.email}  •  📍 {assignedLocation}
+          </Text>
+        </View>
+
+        <View style={[styles.statusBadgeCompact, { backgroundColor: statusBg }]}>
+          <Text style={[styles.statusBadgeCompactText, { color: statusColor }]}>
+            {statusText}
+          </Text>
+        </View>
+
+        <Icon name="chevron-forward-outline" size={18} color={COLORS.text.light} style={{ marginLeft: 6 }} />
+      </TouchableOpacity>
+    );
+  };
+
+  const renderJoinRequestItem = ({ item }: { item: JoinRequest }) => {
+    return (
+      <View style={styles.requestCard}>
+        <View style={styles.requestCardHeader}>
+          <View style={styles.avatarCircle}>
+            <Text style={styles.avatarCircleText}>
+              {item.userName.charAt(0).toUpperCase()}
+            </Text>
           </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.requestName} numberOfLines={1}>{item.userName}</Text>
+            <Text style={styles.requestEmail} numberOfLines={1}>{item.userEmail}</Text>
+            <Text style={styles.requestDateText}>
+              Requested: {new Date(item.requestDate).toLocaleDateString()}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.requestActionsRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.approveBtn]}
+            onPress={async () => {
+              try {
+                await approveJoinRequest(item.id, item.userId);
+                Alert.alert('Approved', `${item.userName} is now part of your organization.`);
+              } catch (err: any) {
+                Alert.alert('Error', err.message || 'Failed to approve request.');
+              }
+            }}
+          >
+            <Icon name="checkmark-outline" size={16} color={COLORS.white} />
+            <Text style={styles.actionBtnText}>Approve</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.rejectBtn]}
+            onPress={async () => {
+              try {
+                await rejectJoinRequest(item.id, item.userId);
+                Alert.alert('Rejected', 'Request rejected.');
+              } catch (err: any) {
+                Alert.alert('Error', err.message || 'Failed to reject request.');
+              }
+            }}
+          >
+            <Icon name="close-outline" size={16} color={COLORS.white} />
+            <Text style={styles.actionBtnText}>Reject</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -283,13 +364,58 @@ export const ManageUsersScreen = () => {
           />
         )}
       </View>
-      <FlatList
-        data={users}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.uid}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.emptyText}>No users found.</Text>}
-      />
+      
+      <View style={styles.tabContainerCustom}>
+        <TouchableOpacity
+          style={[styles.tabCustom, activeTab === 'users' && styles.activeTabCustom]}
+          onPress={() => setActiveTab('users')}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.tabTextCustom, activeTab === 'users' && styles.activeTabTextCustom]}>
+            Staff ({users.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabCustom, activeTab === 'requests' && styles.activeTabCustom]}
+          onPress={() => setActiveTab('requests')}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.tabTextCustom, activeTab === 'requests' && styles.activeTabTextCustom]}>
+            Join Requests ({joinRequests.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeTab === 'users' ? (
+        <FlatList
+          data={users}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.uid}
+          contentContainerStyle={styles.list}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          ListEmptyComponent={<Text style={styles.emptyText}>No users found.</Text>}
+        />
+      ) : (
+        <FlatList
+          data={joinRequests}
+          renderItem={renderJoinRequestItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', marginTop: 40 }}>
+              <Icon name="people-outline" size={48} color={COLORS.text.light} />
+              <Text style={[styles.emptyText, { marginTop: 10 }]}>No pending join requests.</Text>
+            </View>
+          }
+        />
+      )}
 
       {/* Floating Action Button */}
       <TouchableOpacity
@@ -474,6 +600,343 @@ export const ManageUsersScreen = () => {
         </View>
       </Modal>
 
+      {/* User Details & Management Modal */}
+      <Modal
+        visible={detailsModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => {
+          setDetailsModalVisible(false);
+          setSelectedUser(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>👤 Staff Profile & Management</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setDetailsModalVisible(false);
+                  setSelectedUser(null);
+                }}
+              >
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedUser && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+                {/* Large Profile Header */}
+                <View style={styles.profileHeaderBox}>
+                  <View style={styles.largeAvatar}>
+                    <Text style={styles.largeAvatarText}>
+                      {selectedUser.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.profileName}>{selectedUser.name}</Text>
+                  <Text style={styles.profileEmail}>{selectedUser.email}</Text>
+                  
+                  {/* Status Badge in Profile Header */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 8 }}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        {
+                          backgroundColor:
+                            selectedUser.status === 'pending'
+                              ? '#FFFBEB'
+                              : selectedUser.status === 'leave_pending'
+                              ? '#FEF2F2'
+                              : selectedUser.status === 'rejected'
+                              ? '#FEF2F2'
+                              : selectedUser.isActive === false
+                              ? '#FCE4EC'
+                              : '#ECFDF5',
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 20
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          {
+                            color:
+                              selectedUser.status === 'pending'
+                                ? '#D97706'
+                                : selectedUser.status === 'leave_pending'
+                                ? '#EF4444'
+                                : selectedUser.status === 'rejected'
+                                ? '#DC2626'
+                                : selectedUser.isActive === false
+                                ? '#E91E63'
+                                : '#059669',
+                            fontWeight: 'bold'
+                          },
+                        ]}
+                      >
+                        {selectedUser.status === 'pending'
+                          ? 'Pending Approval'
+                          : selectedUser.status === 'leave_pending'
+                          ? 'Leave Requested'
+                          : selectedUser.status === 'rejected'
+                          ? 'Rejected'
+                          : selectedUser.isActive === false
+                          ? 'Inactive'
+                          : 'Active'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Details Section */}
+                <View style={styles.detailsCard}>
+                  {/* Location Assignment */}
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconLabel}>
+                      <Icon name="business-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.detailLabel}>Assigned Location</Text>
+                    </View>
+                    <Text style={styles.detailValue}>
+                      {selectedUser.assignedLocationId
+                        ? locations.find((l) => l.id === selectedUser.assignedLocationId)?.name || 'Unknown'
+                        : 'Not assigned'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.cardDivider} />
+
+                  {/* Shift Timing */}
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconLabel}>
+                      <Icon name="alarm-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.detailLabel}>Shift Hours</Text>
+                    </View>
+                    <Text style={styles.detailValue}>
+                      {selectedUser.assignedCheckInTime && selectedUser.assignedCheckOutTime
+                        ? `${formatTimeDisplay(selectedUser.assignedCheckInTime)} - ${formatTimeDisplay(selectedUser.assignedCheckOutTime)}`
+                        : 'No Shift Set'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.cardDivider} />
+
+                  {/* Device Lock Status */}
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconLabel}>
+                      <Icon name="phone-portrait-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.detailLabel}>Device Link Status</Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.detailValue,
+                        {
+                          color: selectedUser.registeredDeviceId ? '#0369A1' : '#C2410C',
+                          fontWeight: 'bold',
+                        },
+                      ]}
+                    >
+                      {selectedUser.registeredDeviceId ? 'Linked to Device' : 'No Device Linked'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.cardDivider} />
+
+                  {/* Fingerprint Status */}
+                  <View style={styles.detailRow}>
+                    <View style={styles.detailIconLabel}>
+                      <Icon name="finger-print-outline" size={20} color={COLORS.primary} />
+                      <Text style={styles.detailLabel}>Fingerprint Status</Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.detailValue,
+                        {
+                          color: selectedUser.fingerprintTemplate ? COLORS.status.working : COLORS.status.onBreak,
+                          fontWeight: 'bold',
+                        },
+                      ]}
+                    >
+                      {selectedUser.fingerprintTemplate ? 'Registered' : 'Not Registered'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Location Assignment Trigger */}
+                <TouchableOpacity
+                  style={[styles.assignButton, { marginTop: 16 }]}
+                  onPress={() => {
+                    setDetailsModalVisible(false);
+                    openLocationPicker(selectedUser);
+                  }}
+                >
+                  <Text style={styles.assignButtonText}>
+                    {selectedUser.assignedLocationId ? '✏️ Edit Location & Shift' : '📍 Assign Location & Shift'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Fingerprint Enrollment Trigger */}
+                <TouchableOpacity
+                  style={[styles.assignButton, { marginTop: 12, backgroundColor: '#0284c7' }]}
+                  onPress={() => {
+                    setDetailsModalVisible(false);
+                    setEnrollModalVisible(true);
+                  }}
+                >
+                  <Text style={styles.assignButtonText}>
+                    {selectedUser.fingerprintTemplate ? '👍 Re-Enroll Fingerprint' : '➕ Enroll Fingerprint'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Device Reset Approval Card */}
+                {selectedUser.deviceResetRequested && (
+                  <View style={styles.deviceResetNoticeCard}>
+                    <Icon name="warning-outline" size={24} color="#D97706" style={{ marginTop: 2 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.deviceResetNoticeTitle}>Device Reset Requested</Text>
+                      <Text style={styles.deviceResetNoticeDesc}>
+                        This worker requested to unlock their device to login from a new phone.
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.approveResetBtn}
+                        onPress={async () => {
+                          await handleResetDevice(selectedUser.uid);
+                        }}
+                      >
+                        <Text style={styles.approveResetBtnText}>Approve Device Reset</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                 {/* Admin Management Actions */}
+                <Text style={styles.sectionLabel}>Account Management</Text>
+                <View style={styles.actionsCard}>
+                  {/* Leave Request Details & Actions */}
+                  {selectedUser.status === 'leave_pending' && (
+                    <View style={{ marginBottom: 16 }}>
+                      {/* Employee's Leave Reason Card */}
+                      <View style={{ backgroundColor: '#FEF2F2', padding: 14, borderRadius: 12, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: '#EF4444' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                          <Icon name="document-text-outline" size={18} color="#DC2626" />
+                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#991B1B', marginLeft: 6 }}>Leave Reason</Text>
+                        </View>
+                        <Text style={{ fontSize: 13, color: '#7F1D1D', lineHeight: 19 }}>
+                          {selectedUser.leaveReason || 'No reason provided.'}
+                        </Text>
+                      </View>
+
+                      {/* Approve / Reject buttons */}
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity
+                          style={[styles.actionButton, styles.approveButton, { flex: 1 }]}
+                          onPress={() => {
+                            setLeaveCommentAction('approve');
+                            setLeaveAdminComment('');
+                            setShowLeaveCommentModal(true);
+                          }}
+                        >
+                          <Icon name="checkmark-circle-outline" size={18} color={COLORS.white} />
+                          <Text style={styles.actionButtonText}>Approve Leave</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.actionButton, styles.rejectButton, { flex: 1 }]}
+                          onPress={() => {
+                            setLeaveCommentAction('reject');
+                            setLeaveAdminComment('');
+                            setShowLeaveCommentModal(true);
+                          }}
+                        >
+                          <Icon name="close-circle-outline" size={18} color={COLORS.white} />
+                          <Text style={styles.actionButtonText}>Reject Leave</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Approve/Reject for Pending Users */}
+                  {selectedUser.status === 'pending' && (
+                    <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.approveButton, { flex: 1 }]}
+                        onPress={async () => {
+                          await handleUpdateStatus(selectedUser.uid, 'approved');
+                          setDetailsModalVisible(false);
+                        }}
+                      >
+                        <Icon name="checkmark-circle-outline" size={18} color={COLORS.white} />
+                        <Text style={styles.actionButtonText}>Approve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionButton, styles.rejectButton, { flex: 1 }]}
+                        onPress={async () => {
+                          await handleUpdateStatus(selectedUser.uid, 'rejected');
+                          setDetailsModalVisible(false);
+                        }}
+                      >
+                        <Icon name="close-circle-outline" size={18} color={COLORS.white} />
+                        <Text style={styles.actionButtonText}>Reject</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Toggle Active/Inactive */}
+                  <TouchableOpacity
+                    style={[
+                      styles.actionCardBtn,
+                      selectedUser.isActive === false
+                        ? { backgroundColor: '#10B981' }
+                        : { backgroundColor: '#F59E0B' },
+                    ]}
+                    onPress={async () => {
+                      await handleToggleUserActive(selectedUser.uid, selectedUser.isActive);
+                      setDetailsModalVisible(false);
+                    }}
+                  >
+                    <Icon
+                      name={selectedUser.isActive === false ? 'checkmark-done-outline' : 'ban-outline'}
+                      size={18}
+                      color={COLORS.white}
+                    />
+                    <Text style={styles.actionCardBtnText}>
+                      {selectedUser.isActive === false ? 'Activate User Account' : 'Deactivate User Account'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Delete User */}
+                  <TouchableOpacity
+                    style={[styles.actionCardBtn, { backgroundColor: '#EF4444', marginTop: 10 }]}
+                    onPress={async () => {
+                      await handleDeleteUser(selectedUser.uid, selectedUser.name);
+                      setDetailsModalVisible(false);
+                    }}
+                  >
+                    <Icon name="trash-outline" size={18} color={COLORS.white} />
+                    <Text style={styles.actionCardBtnText}>Permanently Delete User</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <EnrollFingerprintModal
+        visible={enrollModalVisible}
+        user={selectedUser}
+        onClose={() => setEnrollModalVisible(false)}
+        onEnrollSuccess={(newTemplate) => {
+          if (selectedUser) {
+            setSelectedUser({
+              ...selectedUser,
+              fingerprintTemplate: newTemplate,
+            });
+          }
+        }}
+      />
+
       {showTimePicker && (
         <DateTimePicker
           testID="dateTimePicker"
@@ -484,6 +947,113 @@ export const ManageUsersScreen = () => {
           onChange={onTimeChange}
         />
       )}
+
+      {/* Leave Request Comment Modal */}
+      <Modal
+        visible={showLeaveCommentModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowLeaveCommentModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { width: '90%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: leaveCommentAction === 'approve' ? '#059669' : '#DC2626' }}>
+                {leaveCommentAction === 'approve' ? '✅ Approve Leave' : '❌ Reject Leave'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowLeaveCommentModal(false)}>
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Show employee's reason */}
+            {selectedUser?.leaveReason ? (
+              <View style={{ backgroundColor: '#F3F4F6', padding: 12, borderRadius: 10, marginBottom: 14, borderLeftWidth: 3, borderLeftColor: '#6B7280' }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#6B7280', marginBottom: 4 }}>Employee's Reason:</Text>
+                <Text style={{ fontSize: 13, color: '#374151', lineHeight: 18 }}>{selectedUser.leaveReason}</Text>
+              </View>
+            ) : null}
+
+            <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.text.primary, marginBottom: 8 }}>
+              Admin Comment {leaveCommentAction === 'reject' ? '*' : '(optional)'}
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: COLORS.background,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: '#e9ecef',
+                padding: 12,
+                fontSize: 14,
+                color: COLORS.text.primary,
+                minHeight: 80,
+                textAlignVertical: 'top',
+                marginBottom: 16,
+              }}
+              value={leaveAdminComment}
+              onChangeText={setLeaveAdminComment}
+              placeholder={leaveCommentAction === 'approve' 
+                ? "Add a comment for the employee (optional)..." 
+                : "Explain why this leave request is rejected..."
+              }
+              placeholderTextColor="#9CA3AF"
+              multiline
+              numberOfLines={3}
+            />
+
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: '#F3F4F6', alignItems: 'center' }}
+                onPress={() => setShowLeaveCommentModal(false)}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: COLORS.text.primary }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  padding: 14,
+                  borderRadius: 10,
+                  backgroundColor: leaveCommentAction === 'approve' ? '#059669' : '#DC2626',
+                  alignItems: 'center',
+                  opacity: processingLeave ? 0.6 : 1,
+                }}
+                disabled={processingLeave}
+                onPress={async () => {
+                  if (leaveCommentAction === 'reject' && !leaveAdminComment.trim()) {
+                    Alert.alert('Comment Required', 'Please provide a reason for rejecting this leave request.');
+                    return;
+                  }
+                  if (!selectedUser) return;
+                  setProcessingLeave(true);
+                  try {
+                    if (leaveCommentAction === 'approve') {
+                      await approveLeaveRequest(selectedUser.uid, selectedUser.name, leaveAdminComment.trim());
+                      Alert.alert('Approved', `${selectedUser.name} has been removed from the organization.`);
+                    } else {
+                      await rejectLeaveRequest(selectedUser.uid, selectedUser.name, leaveAdminComment.trim());
+                      Alert.alert('Rejected', `${selectedUser.name}'s leave request has been rejected.`);
+                    }
+                    setShowLeaveCommentModal(false);
+                    setDetailsModalVisible(false);
+                  } catch (err: any) {
+                    Alert.alert('Error', err.message || 'Failed to process leave request.');
+                  } finally {
+                    setProcessingLeave(false);
+                  }
+                }}
+              >
+                {processingLeave ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: COLORS.white }}>
+                    {leaveCommentAction === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -635,5 +1205,288 @@ const styles = StyleSheet.create({
       borderWidth: 1,
       borderColor: '#e9ecef',
       backgroundColor: COLORS.background
-  }
+  },
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    marginBottom: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  avatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarCircleText: {
+    color: COLORS.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  userRowContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  userRowName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.text.primary,
+    marginBottom: 2,
+  },
+  userRowSub: {
+    fontSize: 13,
+    color: COLORS.text.secondary,
+  },
+  statusBadgeCompact: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 70,
+  },
+  statusBadgeCompactText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    marginBottom: 15,
+  },
+  profileHeaderBox: {
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 15,
+  },
+  largeAvatar: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  largeAvatarText: {
+    color: COLORS.white,
+    fontWeight: 'bold',
+    fontSize: 28,
+  },
+  profileName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: COLORS.text.primary,
+    marginBottom: 4,
+  },
+  profileEmail: {
+    fontSize: 14,
+    color: COLORS.text.secondary,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  detailsCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  detailIconLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  detailLabel: {
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    fontWeight: '500',
+  },
+  detailValue: {
+    fontSize: 14,
+    color: COLORS.text.primary,
+    fontWeight: '600',
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  deviceResetNoticeCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  deviceResetNoticeTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  deviceResetNoticeDesc: {
+    fontSize: 13,
+    color: '#B45309',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  approveResetBtn: {
+    backgroundColor: '#D97706',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  approveResetBtnText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  actionsCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    padding: 16,
+    gap: 10,
+  },
+  actionCardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+    gap: 8,
+  },
+  actionCardBtnText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  tabContainerCustom: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    margin: 16,
+    borderRadius: 12,
+    padding: 4,
+  },
+  tabCustom: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  activeTabCustom: {
+    backgroundColor: COLORS.white,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  tabTextCustom: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.text.secondary,
+  },
+  activeTabTextCustom: {
+    color: COLORS.primary,
+    fontWeight: 'bold',
+  },
+  requestCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#f0f4f8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  requestCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  requestName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: COLORS.text.primary,
+  },
+  requestEmail: {
+    fontSize: 13,
+    color: COLORS.text.secondary,
+    marginTop: 2,
+  },
+  requestDateText: {
+    fontSize: 11,
+    color: COLORS.text.light,
+    marginTop: 4,
+  },
+  requestActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  approveBtn: {
+    backgroundColor: COLORS.status.working,
+  },
+  rejectBtn: {
+    backgroundColor: COLORS.status.offline,
+  },
+  actionBtnText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
 });

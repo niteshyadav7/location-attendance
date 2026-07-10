@@ -16,8 +16,25 @@ import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth 
 
 export const attendanceService = {
   // Fetch attendance records
-  async getAttendanceRecords(organizationId, filters = {}) {
+  async getAttendanceRecords(organizationId, filters = {}, forceRefresh = false) {
     try {
+      const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
+      const isMainQuery = !filters.userId;
+
+      if (!forceRefresh && 
+          isMainQuery && 
+          this._cache.attendance && 
+          this._cache.attendanceOrg === organizationId && 
+          (now - this._cache.attendanceTimestamp < CACHE_DURATION)) {
+          // Serve from cache (shallow copy to prevent mutation)
+          const cachedRecords = [...this._cache.attendance];
+          if (filters.dateFilter) {
+            return this.filterByDateRange(cachedRecords, filters.dateFilter, filters.customStart, filters.customEnd);
+          }
+          return cachedRecords;
+      }
+
       console.log('Fetching attendance for org:', organizationId);
       
       // Simple query without orderBy to avoid index requirement
@@ -49,6 +66,13 @@ export const attendanceService = {
 
       // Sort client-side to avoid index requirement
       records.sort((a, b) => new Date(b.checkInTime) - new Date(a.checkInTime));
+
+      // Cache the main query results
+      if (isMainQuery) {
+        this._cache.attendance = records;
+        this._cache.attendanceOrg = organizationId;
+        this._cache.attendanceTimestamp = now;
+      }
 
       // Apply date filter client-side
       if (filters.dateFilter) {
@@ -133,7 +157,10 @@ export const attendanceService = {
   _cache: {
     users: null,
     usersOrg: null,
-    usersTimestamp: 0
+    usersTimestamp: 0,
+    attendance: null,
+    attendanceOrg: null,
+    attendanceTimestamp: 0
   },
 
   // Get users list

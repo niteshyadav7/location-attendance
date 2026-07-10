@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getFirestore, collection, query, orderBy, limit, onSnapshot, writeBatch, doc, where } from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
 import { Notification } from '../types';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -23,13 +24,17 @@ export const useUserNotifications = () => {
         );
         
         const unsub = onSnapshot(q, (snapshot) => {
+             if (!snapshot) return;
              const list: Notification[] = [];
              snapshot.forEach((doc: any) => list.push({ id: doc.id, ...doc.data() } as Notification));
              list.sort((a, b) => b.timestamp - a.timestamp);
              setNotifications(list);
              setLoading(false);
         }, (err) => {
-            console.error('User Notification Error:', err);
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error('User Notification Error:', err);
+            }
             setLoading(false);
         });
         return () => unsub();

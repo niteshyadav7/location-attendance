@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getFirestore, doc, onSnapshot } from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
+import { Modal, Linking } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { format } from 'date-fns';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { useLocationDetails } from '../hooks/useLocations';
 import { useAuthStore } from '../store/useAuthStore';
 import { getCurrentLocation, calculateDistance, requestLocationPermission } from '../services/location';
-import { LocationConfig, Notice } from '../types';
+import { LocationConfig, Notice, MonthlyPaybook, PaybookAdjustment, MoneyRequest, AttendanceRecord } from '../types';
 import { NoticeModal } from '../components/NoticeModal';
 import { notificationService } from '../services/notificationService';
 import { useAttendance } from '../hooks/useAttendance';
@@ -151,8 +154,13 @@ export const UserHomeScreen = () => {
     if (!user?.uid) return;
     const db = getFirestore();
     const unsub = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
-      if (docSnap.exists()) {
+      if (docSnap && docSnap.exists()) {
         setUserData(docSnap.data() as any);
+      }
+    }, (error) => {
+      const auth = getAuth();
+      if (auth.currentUser) {
+        console.error('Error listening to user data in UserHomeScreen:', error);
       }
     });
     return () => unsub();
@@ -160,6 +168,60 @@ export const UserHomeScreen = () => {
 
   // Auto-Checkout Warning Logic
   const [showAutoCheckoutWarning, setShowAutoCheckoutWarning] = useState(false);
+
+  // Immediate Vacancy Alerts State
+  const [activeVacancy, setActiveVacancy] = useState<any | null>(null);
+  const [showVacancyAlert, setShowVacancyAlert] = useState(false);
+
+  useEffect(() => {
+    if (!userData?.isLookingForJob || !(userData as any).jobTitle) return;
+    const db = getFirestore();
+    const now = Date.now();
+    const locality = (userData as any).locality || 'Kaasganj';
+
+    const q = firestore()
+      .collection('immediate_vacancies')
+      .where('locality', '==', locality)
+      .where('jobCategory', '==', (userData as any).jobTitle)
+      .where('status', '==', 'ACTIVE');
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot && !snapshot.empty) {
+        // Find active vacancy within last 24 hours to keep it fresh
+        const list: any[] = [];
+        const workerIsOnNotice = userData.noticePeriodActive === true;
+
+        snapshot.forEach((docSnap: any) => {
+          const data = docSnap.data();
+          if (now - data.timestamp < 24 * 60 * 60 * 1000) {
+            // Apply targetAudience notice period checks
+            if (data.targetAudience === 'notice' && !workerIsOnNotice) return;
+            if (data.targetAudience === 'immediate' && workerIsOnNotice) return;
+
+            list.push({ id: docSnap.id, ...data });
+          }
+        });
+        if (list.length > 0) {
+          list.sort((a, b) => b.timestamp - a.timestamp);
+          setActiveVacancy(list[0]);
+          setShowVacancyAlert(true);
+        } else {
+          setActiveVacancy(null);
+          setShowVacancyAlert(false);
+        }
+      } else {
+        setActiveVacancy(null);
+        setShowVacancyAlert(false);
+      }
+    }, (error) => {
+      const auth = getAuth();
+      if (auth.currentUser) {
+        console.error('Error listening to vacancies in UserHomeScreen:', error);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [userData?.isLookingForJob, (userData as any)?.jobTitle, (userData as any)?.locality, userData?.noticePeriodActive]);
 
   useEffect(() => {
       if (userData && (userData as any).lastAutoCheckoutTime) {
@@ -173,6 +235,106 @@ export const UserHomeScreen = () => {
           }
       }
   }, [userData]); 
+
+  // Paybook States
+  const [paybookStats, setPaybookStats] = useState({
+    presentDays: 0,
+    workingHours: 0,
+    advances: 0,
+    adjustments: [] as PaybookAdjustment[],
+    status: 'PENDING' as 'PENDING' | 'APPROVED' | 'PAID',
+    loading: false
+  });
+
+  useEffect(() => {
+    if (!userData?.uid || !userData?.organizationId || !userData?.salaryRate) return;
+
+    const db = getFirestore();
+    const now = new Date();
+    const currentMonthStr = format(now, 'yyyy-MM');
+    const paybookId = `${userData.uid}_${currentMonthStr}`;
+    
+    setPaybookStats(prev => ({ ...prev, loading: true }));
+
+    // Setup real-time listener on the paybook doc
+    const unsubscribe = onSnapshot(doc(db, 'paybooks', paybookId), async (docSnap) => {
+      if (!docSnap) return;
+      let adjustments: PaybookAdjustment[] = [];
+      let status: 'PENDING' | 'APPROVED' | 'PAID' = 'PENDING';
+
+      if (docSnap.exists()) {
+        const pb = docSnap.data() as MonthlyPaybook;
+        adjustments = pb.adjustments || [];
+        status = pb.status || 'PENDING';
+      }
+
+      // Re-fetch attendance and advances
+      try {
+        const monthStart = format(startOfMonth(now), 'yyyy-MM-dd');
+        const monthEnd = format(endOfMonth(now), 'yyyy-MM-dd');
+
+        // Fetch attendance
+        const attendanceSnap = await firestore()
+          .collection('attendance')
+          .where('userId', '==', userData.uid)
+          .where('date', '>=', monthStart)
+          .where('date', '<=', monthEnd)
+          .get();
+
+        let presentDays = 0;
+        let totalHours = 0;
+        attendanceSnap.forEach((ds) => {
+          const rec = ds.data() as AttendanceRecord;
+          if (rec.status === 'CHECKED_OUT' || rec.status === 'PRESENT') {
+            presentDays++;
+            if (rec.checkInTime && rec.checkOutTime) {
+              let duration = (rec.checkOutTime - rec.checkInTime) / (1000 * 60 * 60);
+              let breakHours = 0;
+              (rec.breaks || []).forEach((b: any) => {
+                if (b.endTime && b.startTime) {
+                  breakHours += (b.endTime - b.startTime) / (1000 * 60 * 60);
+                }
+              });
+              totalHours += Math.max(0, duration - breakHours);
+            } else if (rec.fixedHours) {
+              totalHours += rec.fixedHours;
+            }
+          }
+        });
+
+        // Fetch approved advances
+        const advancesSnap = await firestore()
+          .collection('money_requests')
+          .where('userId', '==', userData.uid)
+          .where('monthStr', '==', currentMonthStr)
+          .where('status', '==', 'APPROVED')
+          .get();
+
+        let advancesTotal = 0;
+        advancesSnap.forEach((ds) => {
+          const req = ds.data() as MoneyRequest;
+          advancesTotal += req.amount || 0;
+        });
+
+        setPaybookStats({
+          presentDays,
+          workingHours: Math.round(totalHours * 10) / 10,
+          advances: advancesTotal,
+          adjustments,
+          status,
+          loading: false
+        });
+      } catch (err) {
+        console.log("Error inside real-time paybook calc:", err);
+        setPaybookStats(prev => ({ ...prev, loading: false }));
+      }
+    }, (error) => {
+      console.log("Paybook listener error:", error);
+      setPaybookStats(prev => ({ ...prev, loading: false }));
+    });
+
+    return () => unsubscribe();
+  }, [userData?.uid, userData?.salaryRate, userData?.salaryType, attendanceRecord?.status]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -350,6 +512,103 @@ export const UserHomeScreen = () => {
           )}
         </View>
 
+        {/* Wages & Earnings Ledger Card */}
+        {userData?.salaryRate && userData?.salaryRate > 0 && (
+          <View style={styles.paybookCard}>
+             <View style={styles.paybookHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                   <Icon name="wallet" size={22} color={COLORS.primary} />
+                   <Text style={styles.paybookTitle}>My Paybook & Earnings</Text>
+                </View>
+                <View style={[
+                  styles.statusChip,
+                  { 
+                    backgroundColor: paybookStats.status === 'PAID' ? '#d1fae5' : paybookStats.status === 'APPROVED' ? '#dbeafe' : '#fef3c7',
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 6
+                  }
+                ]}>
+                  <Text style={{ 
+                    color: paybookStats.status === 'PAID' ? '#059669' : paybookStats.status === 'APPROVED' ? '#2563eb' : '#d97706', 
+                    fontSize: 10, 
+                    fontWeight: '700',
+                    textTransform: 'uppercase'
+                  }}>
+                    {paybookStats.status}
+                  </Text>
+                </View>
+             </View>
+
+             <Text style={styles.paybookSubtitle}>
+                Wages calculated for {format(new Date(), 'MMMM yyyy')}
+             </Text>
+
+             <View style={styles.divider} />
+
+             {/* Calculation Row Grid */}
+             <View style={styles.paybookRow}>
+                <Text style={styles.paybookLabel}>Salary Model</Text>
+                <Text style={styles.paybookValue}>
+                   ₹{userData.salaryRate} / {userData.salaryType === 'daily' ? 'day' : userData.salaryType === 'monthly' ? 'month' : 'hr'}
+                </Text>
+             </View>
+
+             <View style={styles.paybookRow}>
+                <Text style={styles.paybookLabel}>Attendance Present</Text>
+                <Text style={styles.paybookValue}>{paybookStats.presentDays} days</Text>
+             </View>
+
+             {/* Dynamic salary aggregation */}
+             <View style={styles.paybookRow}>
+                <Text style={styles.paybookLabel}>Base Wages Earned</Text>
+                <Text style={styles.paybookValue}>
+                   ₹{userData.salaryType === 'daily' 
+                      ? paybookStats.presentDays * userData.salaryRate
+                      : userData.salaryType === 'monthly'
+                      ? userData.salaryRate
+                      : Math.round(paybookStats.workingHours * userData.salaryRate)
+                   }
+                </Text>
+             </View>
+
+             {paybookStats.advances > 0 && (
+                <View style={styles.paybookRow}>
+                   <Text style={[styles.paybookLabel, { color: '#EF4444' }]}>Advances Subtracted</Text>
+                   <Text style={[styles.paybookValue, { color: '#EF4444' }]}>-₹{paybookStats.advances}</Text>
+                </View>
+             )}
+
+             {/* Custom adjustments list */}
+             {paybookStats.adjustments.map(adj => (
+                <View key={adj.id} style={styles.paybookRow}>
+                   <Text style={[styles.paybookLabel, { color: adj.type === 'bonus' ? '#059669' : '#D97706' }]}>
+                      {adj.type === 'bonus' ? '🎁' : '⚠️'} {adj.reason}
+                   </Text>
+                   <Text style={[styles.paybookValue, { color: adj.type === 'bonus' ? '#059669' : '#D97706' }]}>
+                      {adj.type === 'bonus' ? '+' : '-'}₹{adj.amount}
+                   </Text>
+                </View>
+             ))}
+
+             <View style={[styles.paybookRow, { borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8, marginTop: 4 }]}>
+                <Text style={[styles.paybookLabel, { fontWeight: '700', color: COLORS.text.primary }]}>Net Pending Payout</Text>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.primary }}>
+                   ₹{Math.max(0, 
+                      (userData.salaryType === 'daily' 
+                         ? paybookStats.presentDays * userData.salaryRate
+                         : userData.salaryType === 'monthly'
+                         ? userData.salaryRate
+                         : Math.round(paybookStats.workingHours * userData.salaryRate)
+                      )
+                      + paybookStats.adjustments.reduce((acc, a) => acc + (a.type === 'bonus' ? a.amount : -a.amount), 0)
+                      - paybookStats.advances
+                   )}
+                </Text>
+             </View>
+          </View>
+        )}
+
         {/* Notice Board Button */}
         {notices.length > 0 && (
           <TouchableOpacity 
@@ -389,7 +648,78 @@ export const UserHomeScreen = () => {
         visible={showNoticeModal}
         onClose={() => setShowNoticeModal(false)}
       />
-      
+
+      {/* Urgent Vacancy Popup Alert Modal */}
+      <Modal
+        visible={showVacancyAlert && activeVacancy !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowVacancyAlert(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: COLORS.white, borderRadius: 24, width: '100%', maxWidth: 400, overflow: 'hidden', elevation: 10 }}>
+            <LinearGradient
+              colors={['#EF4444', '#DC2626']}
+              style={{ padding: 20, alignItems: 'center', flexDirection: 'row', gap: 10 }}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Icon name="megaphone" size={28} color={COLORS.white} />
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: COLORS.white }}>🚨 URGENT VACANCY ALERT</Text>
+            </LinearGradient>
+            
+            <View style={{ padding: 20, gap: 12 }}>
+              <Text style={{ fontSize: 13, textTransform: 'uppercase', color: '#B91C1C', fontWeight: 'bold' }}>
+                Job Category: {activeVacancy?.jobCategory}
+              </Text>
+              
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: COLORS.text.primary }}>
+                {activeVacancy?.employerName}
+              </Text>
+
+              <Text style={{ fontSize: 14, color: COLORS.text.secondary, lineHeight: 20 }}>
+                {activeVacancy?.description}
+              </Text>
+
+              {activeVacancy?.payout ? (
+                <Text style={{ fontSize: 13, color: COLORS.text.primary, fontWeight: '500', marginTop: 4 }}>
+                  💰 Estimated Payout: <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>{activeVacancy.payout}</Text>
+                </Text>
+              ) : null}
+
+
+              <Text style={{ fontSize: 11, color: COLORS.text.light, marginTop: 4 }}>
+                Broadcasted at {activeVacancy?.timestamp ? format(activeVacancy.timestamp, 'h:mm a') : ''} in {activeVacancy?.locality}
+              </Text>
+
+              <View style={{ height: 1, backgroundColor: '#F3F4F6', marginVertical: 8 }} />
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity 
+                  style={{ flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 12, borderRadius: 12, alignItems: 'center' }}
+                  onPress={() => setShowVacancyAlert(false)}
+                >
+                  <Text style={{ color: COLORS.text.secondary, fontWeight: 'bold' }}>Decline</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={{ flex: 2, backgroundColor: '#10B981', paddingVertical: 12, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+                  onPress={() => {
+                    if (activeVacancy?.employerPhone) {
+                      Linking.openURL(`tel:${activeVacancy.employerPhone}`).catch(() => {
+                        Alert.alert('Error', 'Cannot dial owner.');
+                      });
+                    }
+                  }}
+                >
+                  <Icon name="call" size={16} color={COLORS.white} />
+                  <Text style={{ color: COLORS.white, fontWeight: 'bold' }}>Call Shop Owner</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </SafeAreaView>
   );
@@ -809,5 +1139,56 @@ const styles = StyleSheet.create({
       color: '#fff',
       fontWeight: '600',
       fontSize: 14,
+  },
+  
+  // Paybook Card Styles
+  paybookCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 12,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  paybookHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  statusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  paybookTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.text.primary,
+  },
+  paybookSubtitle: {
+    fontSize: 12,
+    color: COLORS.text.secondary,
+    marginBottom: 8,
+  },
+  paybookRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  paybookLabel: {
+    fontSize: 13,
+    color: COLORS.text.secondary,
+  },
+  paybookValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.text.primary,
   },
 });

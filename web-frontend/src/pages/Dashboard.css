@@ -919,3 +919,35 @@
     font-size: 20px;
   }
 }
+
+/* User Security Badges in User List */
+.user-security-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.security-icon-badge {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.security-icon-badge.device-locked {
+  background: #dbeafe;
+  color: #1e40af;
+  border-color: #bfdbfe;
+}
+
+.security-icon-badge.fingerprint-enrolled {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+

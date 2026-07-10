@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requestLocationPermission } from '../services/location';
 import { COLORS } from '../constants/theme';
+
 
 interface PermissionScreenProps {
   onComplete: () => void;
@@ -11,6 +12,23 @@ interface PermissionScreenProps {
 export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }) => {
   const [locationGranted, setLocationGranted] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const requestBatteryOptimization = async () => {
+     Alert.alert(
+         "Enable Background Notifications",
+         "To ensure you receive notifications when the app is closed, please verify that Battery Optimization is disabled for this app.",
+         [
+             {
+                 text: "Open Settings",
+                 onPress: () => Linking.openSettings()
+             },
+             {
+                 text: "Cancel",
+                 style: 'cancel'
+             }
+         ]
+     );
+  };
 
   const handleRequestPermissions = async () => {
     setLoading(true);
@@ -53,6 +71,18 @@ export const PermissionScreen: React.FC<PermissionScreenProps> = ({ onComplete }
             </Text>
           </View>
         </View>
+
+        <TouchableOpacity onPress={requestBatteryOptimization} style={styles.permissionCard}>
+           <View style={styles.iconContainer}>
+            <Text style={styles.icon}>🔋</Text>
+          </View>
+          <View style={styles.textContainer}>
+            <Text style={styles.permissionTitle}>Ignore Battery Optimization</Text>
+            <Text style={styles.permissionDescription}>
+               Required for receiving notifications when the app is closed (especially for Admin alerts).
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.button} 

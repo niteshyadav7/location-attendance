@@ -143,7 +143,7 @@ export const MoneyManagementScreen = () => {
                         hasPendingRequests && styles.userCardPending,
                         hasPendingRequests && { marginLeft: 8 }  // Add margin when pending indicator is shown
                     ]} 
-                    onPress={() => navigation.navigate('UserWalletHistory', { targetUserId: item.userId })}
+                    onPress={() => (navigation as any).navigate('UserWalletHistory', { targetUserId: item.userId })}
                     activeOpacity={0.7}
                 >
                     <View style={styles.userCardContent}>

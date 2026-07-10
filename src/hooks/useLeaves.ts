@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getFirestore, collection, query, where, onSnapshot, addDoc, updateDoc, doc, deleteDoc, getDoc } from '@react-native-firebase/firestore';
 import { LeaveRequest, Notice, UserProfile } from '../types';
+import { getAuth } from '@react-native-firebase/auth';
 
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -89,6 +90,7 @@ export const useNotices = () => {
         );
         
         const unsubNotices = onSnapshot(noticesQuery, (snapshot) => {
+            if (!snapshot) return;
             const companyNotices: Notice[] = [];
             snapshot.forEach((doc: any) => {
                 const n = { id: doc.id, ...doc.data() } as Notice;
@@ -100,7 +102,10 @@ export const useNotices = () => {
             setNotices(companyNotices);
             setLoading(false);
         }, (error) => {
-            console.error('useNotices Error:', error);
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error('useNotices Error:', error);
+            }
             setLoading(false);
         });
         
@@ -134,17 +139,29 @@ export const useAdminLeaves = () => {
         );
 
         const unsubPending = onSnapshot(qPending, (snapshot) => {
+            if (!snapshot) return;
             const data: LeaveRequest[] = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LeaveRequest));
             data.sort((a, b) => a.requestDate - b.requestDate); // Oldest pending first
             setPendingLeaves(data);
-        }, err => console.error(err));
+        }, err => {
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error(err);
+            }
+        });
 
         const unsubApproved = onSnapshot(qApproved, (snapshot) => {
+            if (!snapshot) return;
             const data: LeaveRequest[] = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LeaveRequest));
             data.sort((a, b) => b.requestDate - a.requestDate); // Newest approved first
             setApprovedLeaves(data);
             setLoading(false);
-        }, err => console.error(err));
+        }, err => {
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error(err);
+            }
+        });
 
         return () => {
              unsubPending();

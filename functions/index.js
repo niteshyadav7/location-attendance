@@ -38,10 +38,13 @@ exports.sendNotificationToAdmins = functions.firestore
 
       // Collect FCM tokens from admins
       const tokens = [];
+      const adminDocs = [];
+      
       adminsSnapshot.forEach(doc => {
         const adminData = doc.data();
         if (adminData.fcmToken) {
           tokens.push(adminData.fcmToken);
+          adminDocs.push(doc); // Keep track of docs to remove invalid tokens
         }
       });
 
@@ -52,16 +55,25 @@ exports.sendNotificationToAdmins = functions.firestore
 
       console.log(`Sending notification to ${tokens.length} admin(s)`);
 
-      // Prepare notification payload
+      // Prepare notification payload (FCM V1 API)
       const notificationTitle = getNotificationTitle(type);
       const notificationBody = message;
 
       const payload = {
+        tokens: tokens,
         notification: {
           title: notificationTitle,
           body: notificationBody,
-          sound: 'default',
-          android_channel_id: 'attendance-notifications',
+        },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'attendance-notifications',
+            sound: 'default',
+            priority: 'high', // Android specific priority
+            defaultSound: true,
+            defaultVibrateTimings: true
+          }
         },
         data: {
           type: type,
@@ -72,43 +84,40 @@ exports.sendNotificationToAdmins = functions.firestore
         },
       };
 
-      // Send to all admin tokens
-      const response = await admin.messaging().sendToDevice(tokens, payload, {
-        priority: 'high',
-        timeToLive: 60 * 60 * 24, // 24 hours
-      });
+      // Send to all admin tokens using V1 API
+      const response = await admin.messaging().sendEachForMulticast(payload);
 
-      console.log('Notification sent successfully:', response);
+      console.log('Notification sent successfully:', response.successCount, 'Success', response.failureCount, 'Failures');
 
       // Clean up invalid tokens
-      const tokensToRemove = [];
-      response.results.forEach((result, index) => {
-        const error = result.error;
-        if (error) {
-          console.error('Error sending to token:', tokens[index], error);
-          if (error.code === 'messaging/invalid-registration-token' ||
-              error.code === 'messaging/registration-token-not-registered') {
-            tokensToRemove.push(tokens[index]);
-          }
-        }
-      });
-
-      // Remove invalid tokens from Firestore
-      if (tokensToRemove.length > 0) {
-        console.log(`Removing ${tokensToRemove.length} invalid token(s)`);
+      if (response.failureCount > 0) {
         const batch = admin.firestore().batch();
+        let deletedCount = 0;
         
-        adminsSnapshot.forEach(doc => {
-          const adminData = doc.data();
-          if (tokensToRemove.includes(adminData.fcmToken)) {
-            batch.update(doc.ref, { fcmToken: null });
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            const error = resp.error;
+            console.error('Error sending to token:', tokens[idx], error);
+            if (error.code === 'messaging/invalid-registration-token' ||
+                error.code === 'messaging/registration-token-not-registered') {
+              // Be careful: index matches the tokens array. 
+              // We need to map back to the doc. adminDocs array is parallel to tokens? 
+              // Wait, adminsSnapshot order might differ?
+              // YES, I built "adminDocs" specifically to match "tokens" pushing order above.
+              const docRef = adminDocs[idx].ref;
+              batch.update(docRef, { fcmToken: null });
+              deletedCount++;
+            }
           }
         });
         
-        await batch.commit();
+        if (deletedCount > 0) {
+           console.log(`Removing ${deletedCount} invalid token(s)`);
+           await batch.commit();
+        }
       }
 
-      return response;
+      return { success: true, count: response.successCount };
     } catch (error) {
       console.error('Error in sendNotificationToAdmins:', error);
       return null;
@@ -155,14 +164,24 @@ exports.sendNotificationToUser = functions.firestore
         return null;
       }
 
-      // Prepare payload
+      // Prepare payload (FCM V1 API)
       const notificationTitle = getNotificationTitle(type);
+      
       const payload = {
+        token: fcmToken,
         notification: {
           title: notificationTitle,
           body: message,
-          sound: 'default',
-          android_channel_id: 'attendance-notifications',
+        },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'attendance-notifications',
+            sound: 'default',
+            priority: 'high',
+            defaultSound: true,
+            defaultVibrateTimings: true
+          }
         },
         data: {
           type: type,
@@ -173,27 +192,23 @@ exports.sendNotificationToUser = functions.firestore
       };
 
       // Send to user
-      const response = await admin.messaging().sendToDevice(fcmToken, payload, {
-        priority: 'high',
-        timeToLive: 60 * 60 * 24,
-      });
+      // Note: send() for single token, sendEachForMulticast() for multiple
+      const response = await admin.messaging().send(payload);
 
-      console.log('User notification sent successfully:', response.successCount);
-
-      // Clean up invalid token
-      if (response.results[0].error) {
-        const error = response.results[0].error;
-        console.error('Error sending to user token:', error);
-        if (error.code === 'messaging/invalid-registration-token' ||
-            error.code === 'messaging/registration-token-not-registered') {
-          await userDoc.ref.update({ fcmToken: null });
-          console.log('Removed invalid user token');
-        }
-      }
-
-      return { success: true };
+      console.log('User notification sent successfully:', response);
+      
+      return { success: true, messageId: response };
     } catch (error) {
       console.error('Error in sendNotificationToUser:', error);
+      // Handle invalid token cleanup if possible, but send() throws on error usually
+      if (error.code === 'messaging/invalid-registration-token' || 
+          error.code === 'messaging/registration-token-not-registered') {
+           const db = admin.firestore();
+           // We need to fetch user doc ref again or just use path
+           // userId is available
+           await db.collection('users').doc(userId).update({ fcmToken: null });
+           console.log('Removed invalid user token');
+      }
       return null;
     }
   });
@@ -229,14 +244,6 @@ function getNotificationTitle(type) {
  * 
  * Runs daily at 11:00 PM (23:00) to automatically check out users
  * who have checked in but not checked out on the same day.
- * 
- * For auto check-out cases:
- * - Sets checkout time to 11:00 PM (23:00)
- * - Adds fixed 7 hours to working time (instead of calculating actual time)
- * - Marks record with autoCheckout: true flag
- * - Does NOT trigger if user checked in after 11:00 PM
- * - Does NOT trigger if user already checked out manually
- * - Runs idempotently (no duplicate checkouts)
  */
 exports.autoCheckoutUsers = functions.pubsub
   .schedule('0 23 * * *') // Runs every day at 11:00 PM (23:00)
@@ -258,10 +265,6 @@ exports.autoCheckoutUsers = functions.pubsub
           orgSettings[doc.id] = typeof data.autoCheckoutHours === 'number' ? data.autoCheckoutHours : 7;
           orgCutoffSettings[doc.id] = typeof data.autoCheckoutCutoffHour === 'number' ? data.autoCheckoutCutoffHour : 19;
       });
-      
-      // Default Cutoff (for filtering query only) - We can't easily filter by dynamic cutoff in one query
-      // So we will use the *latest* possible cutoff in our query logic or just filter in memory.
-      // Since default is 19 (7 PM), let's stick to that for the initial filter logic or move logic inside loop.
       
       // Query all attendance records that need auto checkout
       const attendanceSnapshot = await admin.firestore()
@@ -294,41 +297,26 @@ exports.autoCheckoutUsers = functions.pubsub
         
         const userAssignedCheckout = userData.assignedCheckOutTime; // "17:00"
         
-        // 1. Determine the "Official" Checkout Time for this User
-        // Priority: User Assigned Time > Org Cutoff Time > CheckIn + Default Duration
-        
         let finalCheckOutTime;
         let penaltyHours = 0;
-        let calculationMethod = "default"; // 'assigned', 'cutoff', 'max_duration'
+        let calculationMethod = "default";
         
         if (userAssignedCheckout) {
-             // User has a specific assigned checkout time (e.g., 17:00)
              const [h, m] = userAssignedCheckout.split(':').map(Number);
              const assignedTime = new Date(todayStr);
              assignedTime.setHours(h, m, 0, 0);
              const assignedTimestamp = assignedTime.getTime();
              
-             // Check if this time is valid (must be after check-in)
-             // If user checked in LATE (e.g. 10 AM) for a 9-5 shift, they still leave at 5 PM.
              if (assignedTimestamp > data.checkInTime) {
                  finalCheckOutTime = assignedTimestamp;
                  calculationMethod = "assigned";
-                 
-                 // Apply 1 Hour Penalty for missing the punch
                  penaltyHours = 1; 
              } else {
-                 // Edge Case: Checked in AFTER shift ended?? Or night shift?
-                 // Fallback to purely duration based if assigned time is passed
-                 // Or just check them out immediately with 0 hours?
-                 // Let's fallback to standard "CheckIn + 7h" capped by global cutoff
                  calculationMethod = "fallback_late_checkin";
              }
         }
         
         if (!finalCheckOutTime) {
-             // No assigned time (or invalid), use Standard Logic
-             // Min(CheckIn + 7h, Org Cutoff)
-             
              const targetHoursRequest = orgSettings[data.organizationId] || 7;
              const targetCheckOutTime = data.checkInTime + (targetHoursRequest * 60 * 60 * 1000);
              
@@ -337,68 +325,51 @@ exports.autoCheckoutUsers = functions.pubsub
              cutoffTime.setHours(cutoffHour, 0, 0, 0); 
              
              finalCheckOutTime = Math.min(targetCheckOutTime, cutoffTime.getTime());
-             
-             // Also apply penalty here? User request implies penalty is general rule for auto-checkout?
-             // "total working hours will be calculate ... -1 hrs penality for that day"
-             // Let's apply 1 hr penalty globally for auto-checkout cases to be safe/strict
              penaltyHours = 1;
              calculationMethod = "standard_capped";
         }
         
-        // Safety Check: Checkout > Checkin
         if (finalCheckOutTime <= data.checkInTime) {
-             finalCheckOutTime = data.checkInTime; // 0 duration
-             penaltyHours = 0; // Can't penalize 0
+             finalCheckOutTime = data.checkInTime; 
+             penaltyHours = 0; 
         }
         
-        // 2. Calculate Working Duration
         const totalDurationMs = finalCheckOutTime - data.checkInTime;
-        
-        // 3. Deduct Breaks
         let breakDurationMs = 0;
         let breaks = data.breaks || [];
         
-        // Auto-close open break if exists
         if (data.status === 'ON_BREAK' && breaks.length > 0) {
            const lastBreak = breaks[breaks.length - 1];
            if (!lastBreak.endTime) {
-              lastBreak.endTime = finalCheckOutTime; // Close break at checkout
+              lastBreak.endTime = finalCheckOutTime; 
            }
         }
         
-        // Sum breaks
         breaks.forEach(b => {
              if (b.startTime && b.endTime) {
                  breakDurationMs += (b.endTime - b.startTime);
              }
         });
         
-        // 4. Calculate Net Hours
         let netDurationMs = totalDurationMs - breakDurationMs;
         let netHours = netDurationMs / (1000 * 60 * 60);
         
-        // 5. Apply Penalty
         let creditedHours = netHours - penaltyHours;
         if (creditedHours < 0) creditedHours = 0;
-        
-        // Round to 2 decimal places
         creditedHours = Math.round(creditedHours * 100) / 100;
         
-        // Log for debugging
         console.log(`AutoCheckout User: ${data.userName} | CheckIn: ${new Date(data.checkInTime).toLocaleTimeString()} | TargetOut: ${new Date(finalCheckOutTime).toLocaleTimeString()} | Method: ${calculationMethod} | Penalty: ${penaltyHours}h | Credited: ${creditedHours}h`);
         
-        // Update attendance record with auto checkout
         batch.update(docSnap.ref, {
           status: 'CHECKED_OUT',
           checkOutTime: finalCheckOutTime,
           breaks: breaks,
           autoCheckout: true,
-          fixedHours: creditedHours, // FINAL CREDITED HOURS
-          penaltyHours: penaltyHours, // Store penalty for reference
+          fixedHours: creditedHours, 
+          penaltyHours: penaltyHours, 
           notes: `System Auto-Checkout. Credited: ${creditedHours}h (Duration: ${Math.round(netHours*100)/100}h - ${penaltyHours}h Penalty)`
         });
         
-        // Update user status
         const userRef = admin.firestore().collection('users').doc(data.userId);
         batch.update(userRef, {
           currentStatus: 'CHECKED_OUT',
@@ -407,7 +378,6 @@ exports.autoCheckoutUsers = functions.pubsub
           lastAutoCheckoutTime: Date.now()
         });
         
-        // Create notification for admin
         const notificationRef = admin.firestore().collection('notifications').doc();
         batch.set(notificationRef, {
           type: 'CHECK_OUT',
@@ -422,7 +392,6 @@ exports.autoCheckoutUsers = functions.pubsub
         autoCheckoutCount++;
       }
       
-      // Commit all updates in a single batch
       if (autoCheckoutCount > 0) {
         await batch.commit();
         console.log(`Successfully auto checked out ${autoCheckoutCount} user(s)`);
@@ -442,7 +411,6 @@ exports.autoCheckoutUsers = functions.pubsub
  * 
  * Triggers when an attendance document is created or updated.
  * Creates a notification for Admins when status changes.
- * This ensures admins get notified even if the user's app is closed/killed.
  */
 exports.onAttendanceChange = functions.firestore
   .document('attendance/{attendanceId}')
@@ -451,11 +419,8 @@ exports.onAttendanceChange = functions.firestore
       const after = change.after.exists ? change.after.data() : null;
       const before = change.before.exists ? change.before.data() : null;
 
-      // Handle Delete (optional, usually no notification needed)
       if (!after) return null;
 
-      // Skip if this is an auto-checkout update (already handled by autoCheckoutUsers function)
-      // autoCheckoutUsers sets 'autoCheckout: true' which we can use to identify valid system updates
       if (after.autoCheckout || after.autoCheckedOut) {
         return null;
       }
@@ -465,13 +430,13 @@ exports.onAttendanceChange = functions.firestore
       let message = null;
       let shouldNotify = false;
 
-      // CHECK IN: Document created
+      // CHECK IN
       if (!before) {
         notificationType = 'CHECK_IN';
         message = locationName ? `${userName} Checked In at ${locationName}` : `${userName} Checked In`;
         shouldNotify = true;
       }
-      // STATUS CHANGE: Update
+      // STATUS CHANGE
       else if (before.status !== status) {
         // Check Out
         if (status === 'CHECKED_OUT') {
@@ -485,7 +450,7 @@ exports.onAttendanceChange = functions.firestore
           message = `${userName} Started Break`;
           shouldNotify = true;
         }
-        // Break End (Back to Present)
+        // Break End
         else if (before.status === 'ON_BREAK' && status === 'PRESENT') {
           notificationType = 'BREAK_END';
           message = `${userName} Ended Break`;
@@ -496,8 +461,6 @@ exports.onAttendanceChange = functions.firestore
       if (shouldNotify && notificationType) {
         console.log(`Creating ${notificationType} notification for ${userName}`);
         
-        // Create the notification document
-        // This will trigger 'sendNotificationToAdmins' automatically
         await admin.firestore().collection('notifications').add({
           type: notificationType,
           userId,
@@ -521,7 +484,7 @@ exports.onAttendanceChange = functions.firestore
  * Cloud Function: Send Notice to Users
  * 
  * Triggers when a new notice is created in 'notices' collection.
- * Sends push notification to ALL users in the organization.
+ * Sends push notification to ALL users in the organization using V1 API.
  */
 exports.sendNoticeToUsers = functions.firestore
   .document('notices/{noticeId}')
@@ -539,28 +502,23 @@ exports.sendNoticeToUsers = functions.firestore
       console.log('New notice created:', { title, organizationId, priority });
 
       if (!organizationId) {
-        console.log('No organizationId in notice');
         return null;
       }
 
-      // Query users
       let usersQuery = admin.firestore().collection('users')
         .where('organizationId', '==', organizationId);
       
       const usersSnapshot = await usersQuery.get();
 
       if (usersSnapshot.empty) {
-        console.log('No users found for organization:', organizationId);
         return null;
       }
 
-      // Collect tokens
       const tokens = [];
+      const userDocs = [];
       
       usersSnapshot.forEach(doc => {
         const userData = doc.data();
-        
-        // Filter by targetUsers if specified
         if (targetUsers && targetUsers.length > 0) {
           if (!targetUsers.includes(doc.id) && !targetUsers.includes(userData.uid)) {
             return;
@@ -569,70 +527,65 @@ exports.sendNoticeToUsers = functions.firestore
         
         if (userData.fcmToken) {
           tokens.push(userData.fcmToken);
+          userDocs.push(doc);
         }
       });
 
       if (tokens.length === 0) {
-        console.log('No FCM tokens found for users');
         return null;
       }
 
       console.log(`Sending notice to ${tokens.length} users`);
 
-      // Prepare notification payload
       let emoji = '📢';
       if (priority === 'urgent') emoji = '🚨';
       else if (priority === 'high') emoji = '⚠️';
       
+      // Payload for FCM V1 API
       const payload = {
+        tokens: tokens,
         notification: {
-          title: `${emoji} New Notice: ${title}`,
-          body: message,
-          sound: 'default',
-          android_channel_id: 'attendance-notifications', // User reported issue: missing background notifs
+            title: `${emoji} New Notice: ${title}`,
+            body: message,
+        },
+        android: {
+            priority: priority === 'urgent' ? 'high' : 'normal',
+            notification: {
+                channelId: 'attendance-notifications',
+                sound: 'default',
+                priority: priority === 'urgent' ? 'high' : 'default',
+            }
         },
         data: {
-          type: 'notice',
-          noticeId: context.params.noticeId,
-          priority: priority,
-          organizationId: organizationId
-        },
+            type: 'notice',
+            noticeId: context.params.noticeId,
+            priority: priority,
+            organizationId: organizationId
+        }
       };
 
-      // Send to all tokens
-      const response = await admin.messaging().sendToDevice(tokens, payload, {
-        priority: 'high',
-        timeToLive: 60 * 60 * 24 * 7, // 1 week
-      });
-
+      const response = await admin.messaging().sendEachForMulticast(payload);
       console.log('Notice sent successfully:', response.successCount);
 
-      // Clean up invalid tokens
-      const tokensToRemove = [];
-      response.results.forEach((result, index) => {
-        const error = result.error;
-        if (error) {
-          console.error('Error sending to token:', tokens[index], error);
-          if (error.code === 'messaging/invalid-registration-token' ||
-              error.code === 'messaging/registration-token-not-registered') {
-            tokensToRemove.push(tokens[index]);
+      if (response.failureCount > 0) {
+          const batch = admin.firestore().batch();
+          let deletedCount = 0;
+          
+          response.responses.forEach((resp, idx) => {
+             if (!resp.success) {
+                  const error = resp.error;
+                  if (error.code === 'messaging/invalid-registration-token' ||
+                      error.code === 'messaging/registration-token-not-registered') {
+                      const docRef = userDocs[idx].ref;
+                      batch.update(docRef, { fcmToken: null });
+                      deletedCount++;
+                  }
+             }
+          });
+          
+          if (deletedCount > 0) {
+             await batch.commit();
           }
-        }
-      });
-
-      // Remove invalid tokens from Firestore
-      if (tokensToRemove.length > 0) {
-        console.log(`Removing ${tokensToRemove.length} invalid token(s)`);
-        const batch = admin.firestore().batch();
-        
-        usersSnapshot.forEach(doc => {
-          const userData = doc.data();
-          if (tokensToRemove.includes(userData.fcmToken)) {
-            batch.update(doc.ref, { fcmToken: null });
-          }
-        });
-        
-        await batch.commit();
       }
 
       return { success: true, count: tokens.length };
@@ -641,4 +594,181 @@ exports.sendNoticeToUsers = functions.firestore
       return null;
     }
   });
+
+// =========================================================================
+// Transactional SMTP Emails (Nodemailer)
+// =========================================================================
+
+const nodemailer = require('nodemailer');
+
+/**
+ * Helper to send transactional emails via SMTP loaded from Firestore config
+ */
+async function sendSmtpEmail(to, subject, html) {
+  try {
+    const db = admin.firestore();
+    const configDoc = await db.collection('admin_settings').doc('email_config').get();
+    
+    if (!configDoc.exists) {
+      console.warn('⚠️ SMTP Email Configuration not found in Firestore (/admin_settings/email_config). Emails will not be sent.');
+      return false;
+    }
+
+    const config = configDoc.data();
+    const { host, port, secure, user, pass, senderName, senderEmail } = config;
+
+    if (!host || !user || !pass) {
+      console.warn('⚠️ SMTP Email configuration is incomplete (host, user, or pass missing).');
+      return false;
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port: Number(port) || 465,
+      secure: secure !== false, // default to true if secure is not false
+      auth: {
+        user,
+        pass
+      }
+    });
+
+    const mailOptions = {
+      from: `"${senderName || 'GeoAttendance Support'}" <${senderEmail || user}>`,
+      to,
+      subject,
+      html
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ Email sent successfully:', info.messageId);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to send SMTP email:', error);
+    return false;
+  }
+}
+
+/**
+ * Cloud Function: Send Email to Super Admin when a new Company Admin signs up
+ */
+exports.onCompanySignupEmail = functions.firestore
+  .document('users/{userId}')
+  .onCreate(async (snap, context) => {
+    try {
+      const userData = snap.data();
+      
+      // We only care about new company_admins who are pending approval
+      if (userData.role !== 'company_admin' || userData.status !== 'pending') {
+        return null;
+      }
+
+      console.log(`New Company Admin signed up: ${userData.name} (${userData.email}). Preparing notification email...`);
+
+      // Load admin recipient email from config or default to a safe value
+      const db = admin.firestore();
+      const configDoc = await db.collection('admin_settings').doc('email_config').get();
+      let adminRecipient = 'work.thyp01@gmail.com'; // Safe default
+      
+      if (configDoc.exists && configDoc.data().adminRecipientEmail) {
+        adminRecipient = configDoc.data().adminRecipientEmail;
+      }
+
+      const subject = `🔔 New Company Signup: ${userData.name}`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #1F2937; background-color: #F9FAFB; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB;">
+          <h2 style="color: #4F46E5; margin-bottom: 20px; text-align: center;">🔔 New Company Registration</h2>
+          <p>Hi Administrator,</p>
+          <p>A new company registration is awaiting your review on the <b>GeoAttendance Super Admin Dashboard</b>.</p>
+          
+          <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background-color: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.02); border: 1px solid #E5E7EB;">
+            <tr style="background-color: #EEF2F6;">
+              <th style="padding: 12px; text-align: left; border-bottom: 1px solid #E5E7EB; width: 150px; font-size: 14px;">Field</th>
+              <th style="padding: 12px; text-align: left; border-bottom: 1px solid #E5E7EB; font-size: 14px;">Details</th>
+            </tr>
+            <tr>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-weight: bold; font-size: 13px;">Admin Name</td>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-size: 13px;">${userData.name}</td>
+            </tr>
+            <tr>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-weight: bold; font-size: 13px;">Admin Email</td>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-size: 13px;"><a href="mailto:${userData.email}" style="color: #4F46E5; text-decoration: none;">${userData.email}</a></td>
+            </tr>
+            <tr>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-weight: bold; font-size: 13px;">User UID</td>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-size: 13px;"><code>${userData.uid}</code></td>
+            </tr>
+            <tr>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-weight: bold; font-size: 13px;">Organization ID</td>
+              <td style="padding: 12px; border-bottom: 1px solid #E5E7EB; font-size: 13px;"><code>${userData.organizationId}</code></td>
+            </tr>
+          </table>
+
+          <p style="margin-top: 20px;">Please open your Super Admin App and check the <b>Pending</b> tab to approve or reject this company.</p>
+          
+          <div style="height: 1px; background-color: #E5E7EB; margin: 30px 0;"></div>
+          <p style="font-size: 11px; color: #9CA3AF; text-align: center; margin: 0;">GeoAttendance System Notification</p>
+        </div>
+      `;
+
+      await sendSmtpEmail(adminRecipient, subject, html);
+      return { success: true };
+    } catch (error) {
+      console.error('Error in onCompanySignupEmail trigger:', error);
+      return null;
+    }
+  });
+
+/**
+ * Cloud Function: Send Email to Company Admin when their company is approved
+ */
+exports.onCompanyApprovalEmail = functions.firestore
+  .document('users/{userId}')
+  .onUpdate(async (change, context) => {
+    try {
+      const before = change.before.data();
+      const after = change.after.data();
+
+      // We only care about company admins whose status changed to approved
+      if (after.role !== 'company_admin' || after.status !== 'approved' || before.status === 'approved') {
+        return null;
+      }
+
+      console.log(`Company Admin Approved: ${after.name} (${after.email}). Preparing approval notification email...`);
+
+      const subject = `🎉 Your GeoAttendance Account is Approved!`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #1F2937; background-color: #F9FAFB; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB;">
+          <h2 style="color: #10B981; margin-bottom: 10px; text-align: center;">🎉 Congratulations, ${after.name}!</h2>
+          <h3 style="color: #374151; font-weight: normal; margin-top: 0; margin-bottom: 25px; text-align: center;">Your GeoAttendance Company Account is Approved</h3>
+          
+          <p>Hi ${after.name},</p>
+          <p>We are absolutely thrilled to inform you that your registration has been successfully reviewed and <b>approved</b> by the system administrator.</p>
+          
+          <div style="background-color: #FFFFFF; padding: 20px; border-radius: 8px; border-left: 4px solid #10B981; margin: 20px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.01); border: 1px solid #E5E7EB;">
+            <h4 style="margin-top: 0; color: #111827; margin-bottom: 8px; font-size: 15px;">What to do next:</h4>
+            <ol style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 14px;">
+              <li>Open the <b>GeoAttendance</b> app on your Android device.</li>
+              <li>Log in using your registered email: <b>${after.email}</b>.</li>
+              <li>Go to the <b>Settings</b> tab (the gear icon ⚙️) and click the floating <b>+</b> button to add your shop coordinates.</li>
+              <li>Invite your employees to download the app and join using your unique <b>Organization Code</b>.</li>
+            </ol>
+          </div>
+
+          <p>If you have any questions or need onboarding assistance, please feel free to reply directly to this email or contact support.</p>
+          
+          <p style="margin-top: 30px;">Best regards,<br><b>GeoAttendance Support Team</b></p>
+          
+          <div style="height: 1px; background-color: #E5E7EB; margin: 30px 0;"></div>
+          <p style="font-size: 11px; color: #9CA3AF; text-align: center; margin: 0;">This is an automated operational email sent from GeoAttendance.</p>
+        </div>
+      `;
+
+      await sendSmtpEmail(after.email, subject, html);
+      return { success: true };
+    } catch (error) {
+      console.error('Error in onCompanyApprovalEmail trigger:', error);
+      return null;
+    }
+  });
+
 

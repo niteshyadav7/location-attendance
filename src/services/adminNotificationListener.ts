@@ -30,6 +30,7 @@ class AdminNotificationListener {
     );
 
     this.unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot) return;
       snapshot.docChanges().forEach((change: any) => {
         if (change.type === 'added') {
           const notification = { id: change.doc.id, ...change.doc.data() } as Notification;

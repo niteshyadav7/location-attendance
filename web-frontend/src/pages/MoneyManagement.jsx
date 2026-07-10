@@ -19,12 +19,12 @@ const MoneyManagement = ({ user }) => {
   const [monthFilter, setMonthFilter] = useState('all');
   const [selectedUserId, setSelectedUserId] = useState(null);
 
-  const fetchData = React.useCallback(async () => {
+  const fetchData = React.useCallback(async (force = false) => {
     try {
       setLoading(true);
       const [moneyData, usersData] = await Promise.all([
-        moneyService.getMoneyRequests(user.organizationId),
-        attendanceService.getUsers(user.organizationId)
+        moneyService.getMoneyRequests(user.organizationId, {}, force),
+        attendanceService.getUsers(user.organizationId, force)
       ]);
       
       setRequests(moneyData);
@@ -47,9 +47,9 @@ const MoneyManagement = ({ user }) => {
     fetchData();
   }, [fetchData]);
 
-  const fetchUsersOnly = React.useCallback(async () => {
+  const fetchUsersOnly = React.useCallback(async (force = false) => {
     try {
-      const usersData = await attendanceService.getUsers(user.organizationId);
+      const usersData = await attendanceService.getUsers(user.organizationId, force);
       const usersMap = {};
       usersData.forEach(u => {
         usersMap[u.uid] = u;
@@ -205,7 +205,7 @@ const MoneyManagement = ({ user }) => {
     if (!window.confirm("Approve this advance request? It will be deducted from remaining salary.")) return;
     try {
       await moneyService.approveRequest(requestId, user.uid, user.name);
-      fetchData(); // Reload all data
+      fetchData(true); // Reload all data
       // Keep selectedUser view invalidation logic handled by effect below
     } catch (error) {
       alert('Error approving request');
@@ -218,7 +218,7 @@ const MoneyManagement = ({ user }) => {
     
     try {
       await moneyService.rejectRequest(requestId, user.uid, user.name, reason);
-      fetchData();
+      fetchData(true);
     } catch (error) {
       alert('Error rejecting request');
     }
@@ -245,7 +245,7 @@ const MoneyManagement = ({ user }) => {
     try {
       setLoading(true);
       await attendanceService.updateUser(selectedUser.userId, { salaryLimit: limit });
-      await fetchUsersOnly();
+      await fetchUsersOnly(true);
       setShowSalaryModal(false);
     } catch (error) {
       alert("Failed to update salary limit");

@@ -21,6 +21,7 @@ export const useFeedback = () => {
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
+            if (!snapshot) return;
             const list: Feedback[] = [];
             snapshot.forEach((doc: any) => {
                 list.push({ id: doc.id, ...doc.data() } as Feedback);

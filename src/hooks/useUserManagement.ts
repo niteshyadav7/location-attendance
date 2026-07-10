@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from '@react-native-firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword } from '@react-native-firebase/auth';
 import { getApp, initializeApp, deleteApp } from '@react-native-firebase/app';
-import { UserProfile, LocationConfig } from '../types';
+import { UserProfile, LocationConfig, JoinRequest } from '../types';
 import { useAuthStore } from '../store/useAuthStore'; // MULTI-TENANCY
 
 export const useUsers = () => {
     const [users, setUsers] = useState<UserProfile[]>([]);
+    const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
     const [loading, setLoading] = useState(true);
     const user = useAuthStore((state) => state.user); // MULTI-TENANCY
 
@@ -21,6 +22,7 @@ export const useUsers = () => {
         );
         
         const unsub = onSnapshot(q, (snapshot) => {
+            if (!snapshot) return;
             const list: UserProfile[] = [];
             snapshot.forEach((doc: any) => list.push({ ...doc.data(), uid: doc.id } as UserProfile));
             
@@ -33,15 +35,96 @@ export const useUsers = () => {
             setUsers(list);
             setLoading(false);
         }, (error) => {
-            console.error('Error fetching users:', error);
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error('Error fetching users:', error);
+            }
             setLoading(false);
         });
-        return () => unsub();
+
+        // Listen to pending join requests for this organization
+        const joinReqQ = query(
+            collection(db, 'join_requests'),
+            where('organizationId', '==', user.organizationId),
+            where('status', '==', 'PENDING')
+        );
+
+        const joinReqUnsub = onSnapshot(joinReqQ, (snapshot) => {
+            if (!snapshot) return;
+            const list: JoinRequest[] = [];
+            snapshot.forEach((docSnap: any) => {
+                list.push({ ...docSnap.data() } as JoinRequest);
+            });
+            list.sort((a, b) => b.requestDate - a.requestDate);
+            setJoinRequests(list);
+        }, (error) => {
+            const auth = getAuth();
+            if (auth.currentUser) {
+                console.error('Error fetching join requests:', error);
+            }
+        });
+
+        return () => {
+            unsub();
+            joinReqUnsub();
+        };
     }, [user]); // MULTI-TENANCY: Re-run when user changes
 
     const updateUserStatus = async (userId: string, status: 'approved' | 'rejected') => {
         const db = getFirestore();
         await updateDoc(doc(db, 'users', userId), { status });
+    };
+
+    const approveJoinRequest = async (requestId: string, targetUserId: string) => {
+        if (!user?.organizationId) return;
+        const db = getFirestore();
+        
+        // 1. Update user profile to link to organization
+        await updateDoc(doc(db, 'users', targetUserId), {
+            organizationId: user.organizationId,
+            status: 'approved'
+        });
+
+        // 2. Update join request status
+        await updateDoc(doc(db, 'join_requests', requestId), {
+            status: 'APPROVED',
+            actionDate: Date.now(),
+            actionBy: user.name
+        });
+
+        // 3. Create a notification for the approved user
+        await setDoc(doc(collection(db, 'notifications')), {
+            type: 'CHECK_IN',
+            userId: targetUserId,
+            userName: user.name,
+            organizationId: user.organizationId,
+            message: `Your request to join the organization has been APPROVED.`,
+            timestamp: Date.now(),
+            read: false
+        });
+    };
+
+    const rejectJoinRequest = async (requestId: string, targetUserId: string) => {
+        if (!user) return;
+        const db = getFirestore();
+
+        // Update join request status
+        await updateDoc(doc(db, 'join_requests', requestId), {
+            status: 'REJECTED',
+            actionDate: Date.now(),
+            actionBy: user.name
+        });
+
+        // Create a notification for the rejected user
+        await setDoc(doc(collection(db, 'notifications')), {
+            type: 'CHECK_IN',
+            userId: targetUserId,
+            userName: user.name,
+            organizationId: '',
+            message: `Your request to join the organization has been REJECTED.`,
+            timestamp: Date.now(),
+            read: false
+        });
     };
 
     const toggleUserActive = async (userId: string, currentStatus: boolean | undefined) => {
@@ -62,9 +145,73 @@ export const useUsers = () => {
              assignedCheckInTime: assignedCheckInTime || null, // Clear if empty
              assignedCheckOutTime: assignedCheckOutTime || null
          });
+     };
+
+    const approveLeaveRequest = async (targetUserId: string, userName: string, adminComment?: string) => {
+        const db = getFirestore();
+        const orgName = useAuthStore.getState().organization?.name || 'the organization';
+        
+        await updateDoc(doc(db, 'users', targetUserId), {
+            organizationId: '',
+            assignedLocationId: null,
+            registeredDeviceId: null, // Clear device lock when leaving organization
+            status: 'approved',
+            leaveAdminComment: adminComment || '',
+            leaveApprovedAt: Date.now(),
+            leftOrganizationName: orgName,
+        });
+
+        const commentText = adminComment ? `\nAdmin comment: "${adminComment}"` : '';
+        await setDoc(doc(collection(db, 'notifications')), {
+            type: 'LEAVE_APPROVED',
+            userId: targetUserId,
+            userName,
+            organizationId: '',
+            message: `Your request to leave the organization has been APPROVED.${commentText}`,
+            timestamp: Date.now(),
+            read: false
+        });
     };
 
-    return { users, loading, updateUserStatus, toggleUserActive, deleteUser, assignLocation };
+    const rejectLeaveRequest = async (targetUserId: string, userName: string, adminComment?: string) => {
+        if (!user) return;
+        const db = getFirestore();
+        const orgName = useAuthStore.getState().organization?.name || 'the organization';
+
+        await updateDoc(doc(db, 'users', targetUserId), {
+            status: 'approved',
+            leaveReason: null,
+            leaveAdminComment: adminComment || '',
+            leaveRequestedAt: null,
+            leaveRejectedAt: Date.now(),
+            leftOrganizationName: orgName,
+        });
+
+        const commentText = adminComment ? `\nAdmin comment: "${adminComment}"` : '';
+        await setDoc(doc(collection(db, 'notifications')), {
+            type: 'LEAVE_REJECTED',
+            userId: targetUserId,
+            userName,
+            organizationId: user.organizationId,
+            message: `Your request to leave the organization has been REJECTED.${commentText}`,
+            timestamp: Date.now(),
+            read: false
+        });
+    };
+
+    return { 
+        users, 
+        joinRequests, 
+        loading, 
+        updateUserStatus, 
+        approveJoinRequest, 
+        rejectJoinRequest, 
+        toggleUserActive, 
+        deleteUser, 
+        assignLocation,
+        approveLeaveRequest,
+        rejectLeaveRequest
+    };
 };
 
 

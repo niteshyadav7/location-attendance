@@ -13,9 +13,29 @@ import {
 } from 'firebase/firestore';
 
 export const moneyService = {
+  // Cache storage
+  _cache: {
+    requests: null,
+    requestsOrg: null,
+    requestsTimestamp: 0
+  },
+
   // Fetch all money requests for an organization
-  async getMoneyRequests(organizationId, filters = {}) {
+  async getMoneyRequests(organizationId, filters = {}, forceRefresh = false) {
     try {
+      const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+      const now = Date.now();
+      const isMainQuery = !filters.userId && !filters.status;
+
+      if (!forceRefresh && 
+          isMainQuery && 
+          this._cache.requests && 
+          this._cache.requestsOrg === organizationId && 
+          (now - this._cache.requestsTimestamp < CACHE_DURATION)) {
+          // Serve from cache (shallow copy)
+          return [...this._cache.requests];
+      }
+
       console.log('Fetching money requests for org:', organizationId);
       
       let q = query(
@@ -47,6 +67,13 @@ export const moneyService = {
 
       // Sort client-side to avoid index requirement
       requests.sort((a, b) => new Date(b.requestDate) - new Date(a.requestDate));
+
+      // Cache the main query results
+      if (isMainQuery) {
+        this._cache.requests = requests;
+        this._cache.requestsOrg = organizationId;
+        this._cache.requestsTimestamp = now;
+      }
 
       return requests;
     } catch (error) {
@@ -99,6 +126,8 @@ export const moneyService = {
         processedById: adminId,
         processedAt: Timestamp.now()
       });
+      // Invalidate cache
+      this._cache.requests = null;
       return { success: true };
     } catch (error) {
       console.error('Error approving request:', error);
@@ -117,6 +146,8 @@ export const moneyService = {
         processedAt: Timestamp.now(),
         rejectionReason: reason
       });
+      // Invalidate cache
+      this._cache.requests = null;
       return { success: true };
     } catch (error) {
       console.error('Error rejecting request:', error);
@@ -132,6 +163,8 @@ export const moneyService = {
         requestDate: Timestamp.now(),
         status: 'PENDING'
       });
+      // Invalidate cache
+      this._cache.requests = null;
       return { success: true, id: docRef.id };
     } catch (error) {
       console.error('Error creating request:', error);
@@ -143,6 +176,8 @@ export const moneyService = {
   async deleteRequest(requestId) {
     try {
       await deleteDoc(doc(db, 'money_requests', requestId));
+      // Invalidate cache
+      this._cache.requests = null;
       return { success: true };
     } catch (error) {
       console.error('Error deleting request:', error);

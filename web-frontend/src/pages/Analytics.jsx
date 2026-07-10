@@ -1,11 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { attendanceService } from '../services/attendance.service';
 import { moneyService } from '../services/money.service';
-import AttendanceTrendChart from '../components/charts/AttendanceTrendChart';
-import MoneyDistributionPie from '../components/charts/MoneyDistributionPie';
-import WorkingHoursBar from '../components/charts/WorkingHoursBar';
-import ActivityHeatmap from '../components/charts/ActivityHeatmap';
-import AttendanceTimeline from '../components/charts/AttendanceTimeline';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
   BarChart2, TrendingUp, PieChart, Clock, 
@@ -13,6 +8,13 @@ import {
   Users, ArrowUpRight, Loader2
 } from 'lucide-react';
 import './Analytics.css';
+
+// Lazy-load charting and visualization components for performance optimization
+const AttendanceTrendChart = React.lazy(() => import('../components/charts/AttendanceTrendChart'));
+const MoneyDistributionPie = React.lazy(() => import('../components/charts/MoneyDistributionPie'));
+const WorkingHoursBar = React.lazy(() => import('../components/charts/WorkingHoursBar'));
+const ActivityHeatmap = React.lazy(() => import('../components/charts/ActivityHeatmap'));
+const AttendanceTimeline = React.lazy(() => import('../components/charts/AttendanceTimeline'));
 
 const Analytics = ({ user }) => {
   const [attendance, setAttendance] = useState([]);
@@ -113,7 +115,14 @@ const Analytics = ({ user }) => {
         <div className="chart-card full-width">
           <div className="chart-container">
             <h3><TrendingUp size={20} color="#6366f1" /> Attendance Trend</h3>
-            <AttendanceTrendChart data={chartData} />
+            <Suspense fallback={
+              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Loader2 className="spinner-icon" size={24} style={{ animation: 'spin 1s linear infinite', marginRight: '8px' }} />
+                <span>Loading trend visualization...</span>
+              </div>
+            }>
+              <AttendanceTrendChart data={chartData} />
+            </Suspense>
           </div>
         </div>
 
@@ -121,7 +130,14 @@ const Analytics = ({ user }) => {
         <div className="chart-card">
           <div className="chart-container">
             <h3><PieChart size={20} color="#ec4899" /> Expense Distribution</h3>
-            <MoneyDistributionPie data={moneyStats} />
+            <Suspense fallback={
+              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Loader2 className="spinner-icon" size={24} style={{ animation: 'spin 1s linear infinite', marginRight: '8px' }} />
+                <span>Loading expense split...</span>
+              </div>
+            }>
+              <MoneyDistributionPie data={moneyStats} />
+            </Suspense>
           </div>
         </div>
 
@@ -129,7 +145,14 @@ const Analytics = ({ user }) => {
         <div className="chart-card">
           <div className="chart-container">
             <h3><Clock size={20} color="#f59e0b" /> Top Working Hours</h3>
-            <WorkingHoursBar data={userWorkingHours} />
+            <Suspense fallback={
+              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Loader2 className="spinner-icon" size={24} style={{ animation: 'spin 1s linear infinite', marginRight: '8px' }} />
+                <span>Loading work duration metrics...</span>
+              </div>
+            }>
+              <WorkingHoursBar data={userWorkingHours} />
+            </Suspense>
           </div>
         </div>
 
@@ -189,7 +212,14 @@ const Analytics = ({ user }) => {
         <div className="chart-card full-width">
           <div className="chart-container">
             <h3><Activity size={20} color="#10b981" /> Activity Heatmap</h3>
-            <ActivityHeatmap data={attendance} />
+            <Suspense fallback={
+              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Loader2 className="spinner-icon" size={24} style={{ animation: 'spin 1s linear infinite', marginRight: '8px' }} />
+                <span>Loading activity heatmap...</span>
+              </div>
+            }>
+              <ActivityHeatmap data={attendance} />
+            </Suspense>
           </div>
         </div>
 
@@ -197,7 +227,14 @@ const Analytics = ({ user }) => {
         <div className="chart-card full-width">
           <div className="chart-container">
             <h3><Calendar size={20} color="#3b82f6" /> Recent Activity Timeline</h3>
-            <AttendanceTimeline data={attendance.slice(0, 20)} />
+            <Suspense fallback={
+              <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                <Loader2 className="spinner-icon" size={24} style={{ animation: 'spin 1s linear infinite', marginRight: '8px' }} />
+                <span>Loading activity timeline...</span>
+              </div>
+            }>
+              <AttendanceTimeline data={attendance.slice(0, 20)} />
+            </Suspense>
           </div>
         </div>
       </div>

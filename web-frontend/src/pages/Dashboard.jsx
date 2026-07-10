@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { attendanceService } from '../services/attendance.service';
 
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { 
@@ -13,9 +13,11 @@ import './Dashboard.css';
 // Imported Components
 import StatsCards from '../components/dashboard/StatsCards';
 import UserList from '../components/dashboard/UserList';
-import DashboardCharts from '../components/dashboard/DashboardCharts';
 
 import Loader from '../components/common/Loader';
+
+// Lazy loading DashboardCharts for performance optimization
+const DashboardCharts = React.lazy(() => import('../components/dashboard/DashboardCharts'));
 
 const Dashboard = ({ user }) => {
   const navigate = useNavigate();
@@ -28,13 +30,13 @@ const Dashboard = ({ user }) => {
   const [customStartDate, setCustomStartDate] = useState(null);
   const [customEndDate, setCustomEndDate] = useState(null);
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchDashboardData = useCallback(async (force = false) => {
     try {
       setLoading(true);
 
       const [attendanceData, usersData] = await Promise.all([
-        attendanceService.getAttendanceRecords(user.organizationId),
-        attendanceService.getUsers(user.organizationId)
+        attendanceService.getAttendanceRecords(user.organizationId, {}, force),
+        attendanceService.getUsers(user.organizationId, force)
       ]);
 
       setAttendance(attendanceData);
@@ -51,7 +53,7 @@ const Dashboard = ({ user }) => {
   }, [fetchDashboardData]);
 
   const handleRefresh = useCallback(() => {
-    fetchDashboardData();
+    fetchDashboardData(true);
   }, [fetchDashboardData]);
 
   // Filter users by date
@@ -277,10 +279,16 @@ const Dashboard = ({ user }) => {
       )}
 
       {/* Charts Section */}
-      <DashboardCharts 
-        statusData={statusData} 
-        chartData={chartData} 
-      />
+      <Suspense fallback={
+        <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderRadius: '12px', margin: '20px 0', border: '1px solid #f1f5f9' }}>
+          <Loader fullScreen={false} />
+        </div>
+      }>
+        <DashboardCharts 
+          statusData={statusData} 
+          chartData={chartData} 
+        />
+      </Suspense>
 
       {/* User List */}
       <div className="users-section">

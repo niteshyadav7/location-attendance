@@ -16,12 +16,14 @@ service cloud.firestore {
     // Helper function to check if user is super admin
     function isSuperAdmin() {
       return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
     }
     
     // Helper function to check if user is company admin
     function isCompanyAdmin() {
       return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'company_admin';
     }
     
@@ -33,6 +35,7 @@ service cloud.firestore {
     // Helper function to check if user belongs to same organization
     function sameOrganization(orgId) {
       return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId;
     }
     
@@ -47,15 +50,47 @@ service cloud.firestore {
       // Only Super Admin or the specific Company Admin can update/delete
       allow update, delete: if isSuperAdmin() || (isCompanyAdmin() && resource.data.createdBy == request.auth.uid);
     }
+
+    // Join Requests
+    match /join_requests/{requestId} {
+      allow read: if isAuthenticated() && 
+                   (resource.data.userId == request.auth.uid || 
+                    sameOrganization(resource.data.organizationId) ||
+                    isSuperAdmin());
+                    
+      allow create: if isAuthenticated() && 
+                     request.resource.data.userId == request.auth.uid;
+                     
+      allow update: if isSuperAdmin() || 
+                     (isCompanyAdmin() && sameOrganization(resource.data.organizationId));
+                     
+      allow delete: if isSuperAdmin() || 
+                     (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
     
     // Users collection
     match /users/{userId} {
       // Super admin can do anything
       allow read, write: if isSuperAdmin();
       
-      // Company admin can read/write users in their organization
-      allow read, write: if isCompanyAdmin() && 
-                           sameOrganization(resource.data.organizationId);
+      // Company admin can read users in their organization
+      allow read: if isCompanyAdmin() && sameOrganization(resource.data.organizationId);
+      
+      // Company admin can update users in their organization, or approve join requests (by assigning them to their organization)
+      allow update: if isCompanyAdmin() && 
+                       (
+                         sameOrganization(resource.data.organizationId) || 
+                         (
+                           sameOrganization(request.resource.data.organizationId) && 
+                           (
+                             resource.data.get('organizationId', '') == '' || 
+                             resource.data.get('organizationId', '') == 'default-org'
+                           )
+                         )
+                       );
+                       
+      // Company admin can delete users in their organization
+      allow delete: if isCompanyAdmin() && sameOrganization(resource.data.organizationId);
       
       // Users can read their own profile
       allow read: if isAuthenticated() && request.auth.uid == userId;
@@ -76,9 +111,17 @@ service cloud.firestore {
                           )
                         ) ||
 
-                       // OR allow other safe fields (not role, org, isActive, registeredDeviceId)
-                       (!request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['role', 'organizationId', 'isActive', 'registeredDeviceId']))
+                        // OR allow other safe fields (not role, isActive, registeredDeviceId, and organizationId can only be updated if it is set to "")
+                        (!request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['role', 'isActive', 'registeredDeviceId'])) &&
+                        (
+                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['companyRequestStatus']) ||
+                          request.resource.data.companyRequestStatus == 'pending'
+                        ) &&
+                        (
+                          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['organizationId']) ||
+                          request.resource.data.organizationId == ''
+                        )
                      );
       
       // Allow user creation during signup OR by Company Admin
@@ -93,11 +136,11 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       
       // Only Admins can add/edit locations in their org
-      allow create: if isAdmin() && 
-                     sameOrganization(request.resource.data.organizationId);
+      allow create: if isSuperAdmin() || (isAdmin() && 
+                     sameOrganization(request.resource.data.organizationId));
       
-      allow update, delete: if isAdmin() && 
-                             sameOrganization(resource.data.organizationId);
+      allow update, delete: if isSuperAdmin() || (isAdmin() && 
+                             sameOrganization(request.resource.data.organizationId));
     }
     
     // Attendance
@@ -115,7 +158,7 @@ service cloud.firestore {
       // Users can mark attendance (create) for themselves
       // Admins can create attendance for any user in their organization
       allow create: if isAuthenticated() && 
-                     sameOrganization(request.resource.data.organizationId) &&
+                     (isSuperAdmin() || sameOrganization(request.resource.data.organizationId)) &&
                      (
                        // User creating their own attendance
                        request.resource.data.userId == request.auth.uid ||
@@ -124,10 +167,10 @@ service cloud.firestore {
                      );
                      
       // Admins can update/delete; Users can update their own (for checkout/breaks)
-      allow update: if (isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId))) ||
+      allow update: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)) ||
                        (isAuthenticated() && request.auth.uid == resource.data.userId && sameOrganization(resource.data.organizationId));
       
-      allow delete: if (isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)));
+      allow delete: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId));
     }
     
     // Leaves
@@ -143,10 +186,10 @@ service cloud.firestore {
                      request.resource.data.userId == request.auth.uid;
       
       // Admins and Users (their own) can update (e.g. cancel)
-      allow update: if (isAdmin() && sameOrganization(resource.data.organizationId)) ||
+      allow update: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)) ||
                        (request.auth.uid == resource.data.userId);
                        
-      allow delete: if isAdmin() && sameOrganization(resource.data.organizationId);
+      allow delete: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId));
     }
     
     // Notices (Company-specific)
@@ -198,11 +241,58 @@ service cloud.firestore {
                      sameOrganization(request.resource.data.organizationId) &&
                      request.resource.data.userId == request.auth.uid;
       
-      allow update: if (isAdmin() && sameOrganization(resource.data.organizationId)) ||
+      allow update: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)) ||
                        (request.auth.uid == resource.data.userId); 
                        
-      allow delete: if (isAdmin() && sameOrganization(resource.data.organizationId)) ||
+      allow delete: if isSuperAdmin() || (isAdmin() && sameOrganization(resource.data.organizationId)) ||
                        (request.auth.uid == resource.data.userId);
+    }
+
+    // ============================================
+    // Local Hiring Directory & Profiles
+    // ============================================
+    match /hiring_profiles/{userId} {
+      allow read, write: if true;
+    }
+
+    // ============================================
+    // Job Inquiries
+    // ============================================
+    match /job_inquiries/{inquiryId} {
+      allow read: if isAuthenticated() && 
+                   (request.auth.uid == resource.data.workerId || sameOrganization(resource.data.employerId));
+      allow create: if isCompanyAdmin();
+      allow update: if (isAuthenticated() && request.auth.uid == resource.data.workerId) || 
+                      (isCompanyAdmin() && sameOrganization(resource.data.employerId));
+      allow delete: if isSuperAdmin() || (isCompanyAdmin() && sameOrganization(resource.data.employerId));
+    }
+
+    // ============================================
+    // Salary Paybooks
+    // ============================================
+    match /paybooks/{paybookId} {
+      allow read: if isAuthenticated() && 
+                   (isSuperAdmin() ||
+                    sameOrganization(resource.data.organizationId) || 
+                    request.auth.uid == resource.data.userId);
+                   
+      allow create, update: if isSuperAdmin() || (isAdmin() && 
+                             sameOrganization(request.resource.data.organizationId));
+                             
+      allow delete: if isSuperAdmin();
+    }
+
+    // ============================================
+    // Immediate Vacancies
+    // ============================================
+    match /immediate_vacancies/{vacancyId} {
+      allow read: if isAuthenticated();
+      
+      allow create: if isSuperAdmin() || (isCompanyAdmin() && 
+                     sameOrganization(request.resource.data.employerId));
+                    
+      allow update, delete: if isSuperAdmin() || (isCompanyAdmin() && 
+                             sameOrganization(resource.data.employerId));
     }
   }
 }

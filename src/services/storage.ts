@@ -23,7 +23,7 @@ export const captureSelfie = async (): Promise<string | null> => {
         includeBase64: false,
         saveToPhotos: false,
       },
-      (response) => {
+      (response: any) => {
         if (response.didCancel) {
           resolve(null);
         } else if (response.errorMessage) {

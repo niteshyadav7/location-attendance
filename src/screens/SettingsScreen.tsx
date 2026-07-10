@@ -13,6 +13,8 @@ import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigation } from '@react-navigation/native';
 import firestore from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 export const SettingsScreen = () => {
   const navigation = useNavigation<any>();
@@ -26,7 +28,13 @@ export const SettingsScreen = () => {
   const { userDetails, loading: fetchingDetails, updateField, logout } = useUserProfile();
   const { submitFeedback, submitting: submittingFeedback } = useFeedback();
   const { appUpdates } = useAppUpdates();
-  const { changePassword } = useAuth();
+  const { changePassword, changeEmail, leaveOrganization, setPasswordForGoogleUser, reauthenticateUser } = useAuth();
+
+  // User auth details for provider check
+  const currentUser = getAuth().currentUser;
+  const isGoogleUser = currentUser?.providerData.some(p => p.providerId === 'google.com');
+  const hasPasswordProvider = currentUser?.providerData.some(p => p.providerId === 'password');
+  const isGoogleOnly = isGoogleUser && !hasPasswordProvider;
 
   // Local State
   const [showEditModal, setShowEditModal] = useState(false);
@@ -44,6 +52,25 @@ export const SettingsScreen = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+
+  // Change Email State
+  const [showChangeEmailModal, setShowChangeEmailModal] = useState(false);
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [updatingEmail, setUpdatingEmail] = useState(false);
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [reauthLoading, setReauthLoading] = useState(false);
+
+  // Set Password State (Google-only users)
+  const [showSetPasswordModal, setShowSetPasswordModal] = useState(false);
+  const [googlePasswordInput, setGooglePasswordInput] = useState('');
+  const [googleConfirmPasswordInput, setGoogleConfirmPasswordInput] = useState('');
+  const [settingGooglePassword, setSettingGooglePassword] = useState(false);
+
+  // Leave Organization State
+  const [showLeaveOrgModal, setShowLeaveOrgModal] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [submittingLeave, setSubmittingLeave] = useState(false);
   
   // Auto Checkout State
   const [showAutoCheckoutModal, setShowAutoCheckoutModal] = useState(false);
@@ -191,6 +218,118 @@ export const SettingsScreen = () => {
       } finally {
           setSavingCutoff(false);
       }
+  };
+
+  const handleSaveEmail = async (emailToSave: string) => {
+    setUpdatingEmail(true);
+    try {
+      await changeEmail(emailToSave.trim().toLowerCase());
+      Alert.alert('Success', 'Email address updated successfully.');
+      setShowChangeEmailModal(false);
+      setNewEmailInput('');
+    } catch (error: any) {
+      if (error.message === 'REQUIRES_REAUTH') {
+        setShowReauthModal(true);
+      } else {
+        Alert.alert('Error', error.message || 'Failed to change email.');
+      }
+    } finally {
+      setUpdatingEmail(false);
+    }
+  };
+
+  const handleReauthSubmit = async () => {
+    setReauthLoading(true);
+    try {
+      await reauthenticateUser(reauthPassword, undefined);
+      setShowReauthModal(false);
+      setReauthPassword('');
+      await handleSaveEmail(newEmailInput);
+    } catch (error: any) {
+      Alert.alert('Verification Failed', error.message || 'Incorrect password.');
+    } finally {
+      setReauthLoading(false);
+    }
+  };
+
+  const handleGoogleReauth = async () => {
+    setReauthLoading(true);
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const signInResult = await GoogleSignin.signIn();
+      if (signInResult.type !== 'success') {
+        throw new Error('Google Sign-In was cancelled or failed.');
+      }
+      const idToken = signInResult.data.idToken;
+      if (!idToken) throw new Error('No ID Token received from Google Sign-In.');
+
+      await reauthenticateUser(undefined, idToken);
+      setShowReauthModal(false);
+      await handleSaveEmail(newEmailInput);
+    } catch (error: any) {
+      Alert.alert('Google Verification Failed', error.message || 'Could not verify.');
+    } finally {
+      setReauthLoading(false);
+    }
+  };
+
+  const handleLeaveOrganization = () => {
+    if (!organization) return;
+    if (user?.status === 'leave_pending') {
+      Alert.alert('Already Requested', 'Your leave request is already pending admin approval.');
+      return;
+    }
+    setLeaveReason('');
+    setShowLeaveOrgModal(true);
+  };
+
+  const handleSubmitLeaveRequest = async () => {
+    if (!leaveReason.trim()) {
+      Alert.alert('Reason Required', 'Please provide a reason for leaving the organization.');
+      return;
+    }
+    setSubmittingLeave(true);
+    try {
+      await leaveOrganization(leaveReason.trim());
+      setShowLeaveOrgModal(false);
+      setLeaveReason('');
+      Alert.alert(
+        'Request Submitted',
+        `Your request to leave ${organization?.name} has been submitted. You will be notified once the admin approves or rejects your request.`
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to submit leave request.');
+    } finally {
+      setSubmittingLeave(false);
+    }
+  };
+
+  const handleSetPasswordSubmit = async () => {
+    if (!googlePasswordInput || !googleConfirmPasswordInput) {
+      Alert.alert('Error', 'Please fill in all fields.');
+      return;
+    }
+    if (googlePasswordInput !== googleConfirmPasswordInput) {
+      Alert.alert('Error', 'Passwords do not match.');
+      return;
+    }
+    if (googlePasswordInput.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters.');
+      return;
+    }
+
+    setSettingGooglePassword(true);
+    try {
+      await setPasswordForGoogleUser(googlePasswordInput);
+      Alert.alert('Success', 'Password created successfully! You can now log in with email/password too.');
+      setShowSetPasswordModal(false);
+      setGooglePasswordInput('');
+      setGoogleConfirmPasswordInput('');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to set password.');
+    } finally {
+      setSettingGooglePassword(false);
+    }
   };
 
   const getFieldLabel = (field: keyof UserDetails) => {
@@ -645,6 +784,17 @@ export const SettingsScreen = () => {
 
       {/* Account Actions */}
       <View style={styles.actionsContainer}>
+        {!isCompanyAdmin && user?.role !== 'super_admin' && (
+          <TouchableOpacity 
+            style={[styles.actionButton, { backgroundColor: '#EEF2FF', borderColor: COLORS.primary }]} 
+            onPress={() => navigation.navigate('JobProfile')}
+            activeOpacity={0.8}
+          >
+            <Icon name="briefcase-outline" size={20} color={COLORS.primary} />
+            <Text style={[styles.feedbackButtonText, { color: COLORS.primary }]}>Hiring & Job Profile</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity 
           style={[styles.actionButton, styles.walletButton]} 
           onPress={() => navigation.navigate('MoneyManagement')}
@@ -654,14 +804,58 @@ export const SettingsScreen = () => {
           <Text style={styles.walletButtonText}>Wallet & Advances</Text>
         </TouchableOpacity>
 
+        {/* Change Email Action */}
         <TouchableOpacity 
-          style={[styles.actionButton, styles.changePasswordButton]} 
-          onPress={() => setShowChangePasswordModal(true)}
+          style={[styles.actionButton, { backgroundColor: '#F0FDF4', borderColor: '#16A34A', borderWidth: 1 }]} 
+          onPress={() => setShowChangeEmailModal(true)}
           activeOpacity={0.8}
         >
-          <Icon name="lock-closed-outline" size={20} color="#8B5CF6" />
-          <Text style={styles.changePasswordButtonText}>Change Password</Text>
+          <Icon name="mail-outline" size={20} color="#16A34A" />
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#16A34A', marginLeft: 12 }}>Change Email</Text>
         </TouchableOpacity>
+
+        {/* Leave Organization Action */}
+        {!isCompanyAdmin && user?.role !== 'super_admin' && user?.organizationId ? (
+          <TouchableOpacity 
+            style={[styles.actionButton, { 
+              backgroundColor: user?.status === 'leave_pending' ? '#FFF7ED' : '#FEF2F2', 
+              borderColor: user?.status === 'leave_pending' ? '#F59E0B' : '#EF4444', 
+              borderWidth: 1 
+            }]} 
+            onPress={handleLeaveOrganization}
+            activeOpacity={0.8}
+          >
+            <Icon 
+              name={user?.status === 'leave_pending' ? 'time-outline' : 'exit-outline'} 
+              size={20} 
+              color={user?.status === 'leave_pending' ? '#F59E0B' : '#EF4444'} 
+            />
+            <Text style={{ fontSize: 16, fontWeight: '600', color: user?.status === 'leave_pending' ? '#F59E0B' : '#EF4444', marginLeft: 12 }}>
+              {user?.status === 'leave_pending' ? 'Leave Request Pending...' : 'Leave Organization'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* Change Password / Set Password */}
+        {hasPasswordProvider ? (
+          <TouchableOpacity 
+            style={[styles.actionButton, styles.changePasswordButton]} 
+            onPress={() => setShowChangePasswordModal(true)}
+            activeOpacity={0.8}
+          >
+            <Icon name="lock-closed-outline" size={20} color="#8B5CF6" />
+            <Text style={styles.changePasswordButtonText}>Change Password</Text>
+          </TouchableOpacity>
+        ) : isGoogleOnly ? (
+          <TouchableOpacity 
+            style={[styles.actionButton, { backgroundColor: '#F5F3FF', borderColor: '#8B5CF6', borderWidth: 1 }]} 
+            onPress={() => setShowSetPasswordModal(true)}
+            activeOpacity={0.8}
+          >
+            <Icon name="lock-open-outline" size={20} color="#8B5CF6" />
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#8B5CF6', marginLeft: 12 }}>Set Password</Text>
+          </TouchableOpacity>
+        ) : null}
 
         <TouchableOpacity 
             style={[styles.actionButton, styles.feedbackButton]} 
@@ -687,6 +881,65 @@ export const SettingsScreen = () => {
         <Text style={styles.footerText}>Location Attendance v3.0</Text>
         <Text style={styles.footerSubtext}>Location-Based Attendance System</Text>
       </View>
+
+      {/* Leave Organization Reason Modal */}
+      <Modal
+        visible={showLeaveOrgModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowLeaveOrgModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Leave Organization</Text>
+              <TouchableOpacity onPress={() => setShowLeaveOrgModal(false)}>
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={{ backgroundColor: '#FEF2F2', padding: 12, borderRadius: 10, marginBottom: 16, borderLeftWidth: 4, borderLeftColor: '#EF4444' }}>
+                <Text style={{ color: '#991B1B', fontSize: 13, lineHeight: 18 }}>
+                  ⚠️ Your leave request will be sent to the admin for approval. You will be notified once a decision is made.
+                </Text>
+              </View>
+
+              <Text style={styles.inputLabel}>Reason for leaving *</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={leaveReason}
+                onChangeText={setLeaveReason}
+                placeholder="Please explain why you want to leave this organization..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => setShowLeaveOrgModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.saveButton, { backgroundColor: '#EF4444' }, submittingLeave && { opacity: 0.6 }]}
+                onPress={handleSubmitLeaveRequest}
+                disabled={submittingLeave}
+              >
+                {submittingLeave ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Submit Request</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Modal */}
       <Modal
@@ -1059,6 +1312,203 @@ export const SettingsScreen = () => {
                   <ActivityIndicator color={COLORS.white} size="small" />
                 ) : (
                   <Text style={styles.saveButtonText}>Save Settings</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Change Email Modal */}
+      <Modal
+        visible={showChangeEmailModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowChangeEmailModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Change Email Address</Text>
+              <TouchableOpacity onPress={() => setShowChangeEmailModal(false)}>
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={styles.inputLabel}>New Email Address</Text>
+              <TextInput
+                style={styles.input}
+                value={newEmailInput}
+                onChangeText={setNewEmailInput}
+                placeholder="Enter new email address"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholderTextColor={COLORS.text.light}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowChangeEmailModal(false);
+                  setNewEmailInput('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.saveButton}
+                onPress={() => handleSaveEmail(newEmailInput)}
+                disabled={updatingEmail}
+              >
+                {updatingEmail ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Update Email</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Re-authentication Modal */}
+      <Modal
+        visible={showReauthModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowReauthModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Verify Identity</Text>
+              <TouchableOpacity onPress={() => setShowReauthModal(false)}>
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={styles.modalSubtitle}>
+                A recent login is required to change your email. Please verify your identity.
+              </Text>
+              
+              {isGoogleUser ? (
+                <TouchableOpacity 
+                  style={[styles.saveButton, { width: '100%', paddingVertical: 14, flexDirection: 'row', justifyContent: 'center', gap: 8 }]} 
+                  onPress={handleGoogleReauth}
+                  disabled={reauthLoading}
+                >
+                  <Icon name="logo-google" size={18} color={COLORS.white} />
+                  <Text style={styles.saveButtonText}>Verify with Google</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.inputLabel}>Enter Account Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={reauthPassword}
+                    onChangeText={setReauthPassword}
+                    placeholder="Enter password"
+                    secureTextEntry
+                    placeholderTextColor={COLORS.text.light}
+                  />
+                </View>
+              )}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowReauthModal(false);
+                  setReauthPassword('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              {!isGoogleUser && (
+                <TouchableOpacity 
+                  style={styles.saveButton}
+                  onPress={handleReauthSubmit}
+                  disabled={reauthLoading}
+                >
+                  {reauthLoading ? (
+                    <ActivityIndicator color={COLORS.white} size="small" />
+                  ) : (
+                    <Text style={styles.saveButtonText}>Verify</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Set Password Modal for Google Users */}
+      <Modal
+        visible={showSetPasswordModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowSetPasswordModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Set Account Password</Text>
+              <TouchableOpacity onPress={() => setShowSetPasswordModal(false)}>
+                <Icon name="close" size={24} color={COLORS.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={styles.modalSubtitle}>
+                Add password credentials to log in using email & password alongside Google.
+              </Text>
+
+              <Text style={styles.inputLabel}>New Password</Text>
+              <TextInput
+                style={styles.input}
+                value={googlePasswordInput}
+                onChangeText={setGooglePasswordInput}
+                placeholder="Enter password (min 6 chars)"
+                secureTextEntry
+                placeholderTextColor={COLORS.text.light}
+              />
+
+              <Text style={[styles.inputLabel, { marginTop: 15 }]}>Confirm Password</Text>
+              <TextInput
+                style={styles.input}
+                value={googleConfirmPasswordInput}
+                onChangeText={setGoogleConfirmPasswordInput}
+                placeholder="Confirm password"
+                secureTextEntry
+                placeholderTextColor={COLORS.text.light}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowSetPasswordModal(false);
+                  setGooglePasswordInput('');
+                  setGoogleConfirmPasswordInput('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.saveButton}
+                onPress={handleSetPasswordSubmit}
+                disabled={settingGooglePassword}
+              >
+                {settingGooglePassword ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Set Password</Text>
                 )}
               </TouchableOpacity>
             </View>
